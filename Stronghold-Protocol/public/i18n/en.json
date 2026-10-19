@@ -2227,5 +2227,11 @@
   "单场测试": "Single battle test",
   "魔理沙 MOD 管理器": "Marisa MOD manager",
   "房主应用后，加入者、观战者与重连者自动跟随房间配置。": "After the host applies settings, joining players, spectators and reconnecting players follow the room configuration.",
-  "CONTINGENCY // 机变阶段": "CONTINGENCY // Improv Phase"
+  "CONTINGENCY // 机变阶段": "CONTINGENCY // Improv Phase",
+  "阿米娅（医疗）": "Amiya (Medic)",
+  "扩展共包含 10 位干员、3 条盟约、2 个策略和人格羁绊装备。": "This expansion includes 10 operators, 3 alliances, 2 strategies and Persona Bond equipment.",
+  "人格羁绊可让装备者成为 S.E.E.S 成员；关闭 S.E.E.S 时，该装备一并关闭。": "Persona Bond makes its wearer a S.E.E.S member. Disabling S.E.E.S also disables this equipment.",
+  "跟随其他盟约叠层，提供治疗，并将治疗转化为伤害。": "Builds stacks alongside other alliances, provides healing and converts healing into damage.",
+  "学生互助会救场；50 层保证进阶装备，100 层保证最高已解锁本数的干员。": "The Student Mutual Aid Society rescues allies. At 50 stacks, equipment is advanced; at 100, the shop guarantees an operator of the highest unlocked tier.",
+  "控场回复技力，6 名成员解锁总攻击与神通法真伤。": "Crowd control restores SP. Six members unlock All-Out Attack and Theurgy true damage."
 }

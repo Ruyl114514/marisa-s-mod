@@ -3,7 +3,48 @@ import {html,Button} from './components.js';
 import {data,useData} from '../data.js';
 import {t} from '../../../shared/i18n.js';
 import {MOD_EXISTING_OPERATOR_IDS,MOD_ADDED_OPERATORS,MOD_BOND_IDS,MOD_NEW_BOND_MEMBERS,MOD_STRATEGY_IDS,enabledModBondMembers,normalizeModOptions,optionsFromSettings,settingsFromOptions} from '../../../shared/plugins/marisaProfile.js';
-const labels={"char_196_sunbr":"古米","char_171_bldsk":"华法琳","char_x_marisa_makoto":"结城理","char_1015_aglna2":"予愿安洁莉娜","char_1052_kalts2":"凯尔希·思衡托","char_x_marisa_amiya3":"阿米娅","char_x_marisa_headbr":"凛冬","char_1051_headb2":"怒潮凛冬","char_188_helage":"赫拉格","char_x_marisa_kormr":"虎狼丸","char_x_marisa_aigis":"埃癸斯","char_x_marisa_yukari":"岳羽由加莉","bond_x_marisa_rhodeShip":"罗德岛","bond_x_marisa_seesShip":"S.E.E.S","bond_x_marisa_uniteShip":"我们联合","band_x_marisa_kun":"鲲","band_x_marisa_unite":"怒潮凛冬"}; // i18n-ignore: fallback game names; loaded records provide localized names.
+const labels={
+  "char_171_bldsk": "华法琳",
+  "char_196_sunbr": "古米",
+  "char_003_kalts": "凯尔希",
+  "char_4179_monstr": "Mon3tr",
+  "char_4195_radian": "电弧",
+  "char_4228_closur": "可露希尔",
+  "char_4230_mcnist": "机械师",
+  "char_1015_aglna2": "予愿安洁莉娜",
+  "char_1052_kalts2": "凯尔希·思衡托",
+  "char_1051_headb2": "怒潮凛冬",
+  "char_188_helage": "赫拉格",
+  "char_x_marisa_makoto": "结城理",
+  "char_x_marisa_amiya3": "阿米娅",
+  "char_x_marisa_headbr": "凛冬",
+  "char_x_marisa_kormr": "虎狼丸",
+  "char_x_marisa_aigis": "埃癸斯",
+  "char_x_marisa_yukari": "岳羽由加莉",
+  "bond_x_marisa_rhodeShip": "罗德岛",
+  "bond_x_marisa_seesShip": "S.E.E.S",
+  "bond_x_marisa_uniteShip": "我们联合",
+  "band_x_marisa_kun": "鲲",
+  "band_x_marisa_unite": "怒潮凛冬"
+}; // i18n-ignore: fallback game names; loaded records provide localized names.
+const defaultMembers=new Set([
+  "bond_x_marisa_rhodeShip:char_171_bldsk",
+  "bond_x_marisa_rhodeShip:char_1052_kalts2",
+  "bond_x_marisa_rhodeShip:char_x_marisa_amiya3",
+  "bond_x_marisa_rhodeShip:char_003_kalts",
+  "bond_x_marisa_rhodeShip:char_4179_monstr",
+  "bond_x_marisa_rhodeShip:char_4195_radian",
+  "bond_x_marisa_rhodeShip:char_4228_closur",
+  "bond_x_marisa_rhodeShip:char_4230_mcnist",
+  "bond_x_marisa_seesShip:char_x_marisa_makoto",
+  "bond_x_marisa_seesShip:char_x_marisa_kormr",
+  "bond_x_marisa_seesShip:char_x_marisa_aigis",
+  "bond_x_marisa_seesShip:char_x_marisa_yukari",
+  "bond_x_marisa_uniteShip:char_196_sunbr",
+  "bond_x_marisa_uniteShip:char_x_marisa_headbr",
+  "bond_x_marisa_uniteShip:char_1051_headb2",
+  "bond_x_marisa_uniteShip:char_188_helage"
+]);
 export function MarisaSettings({values={},disabled=false,onSave}){
   useData('chess','backups','bonds');
   const initial=optionsFromSettings(values),signature=JSON.stringify(initial);
@@ -12,9 +53,17 @@ export function MarisaSettings({values={},disabled=false,onSave}){
   const modEnabled=!disabled,managerDataReady=true;
   const updateModOptions=fn=>setOptions(p=>normalizeModOptions(fn(p)));
   const baseOperators=MOD_EXISTING_OPERATOR_IDS.map(charId=>({charId,name:data.get('backups')?.units?.[charId]?.name||data.list('chess').find(c=>c.charId===charId)?.name||labels[charId]||charId}));
+  const defaultMemberChecked=(bondId,charId)=>defaultMembers.has(bondId+':'+charId)
+    && (MOD_ADDED_OPERATORS.some(operator=>operator.charId===charId)
+      || (modOptions.existing.enabled&&!modOptions.existing.vanillaChars.includes(charId)));
+  const bondDescriptions={
+    bond_x_marisa_rhodeShip:t('跟随其他盟约叠层，提供治疗，并将治疗转化为伤害。'),
+    bond_x_marisa_uniteShip:t('学生互助会救场；50 层保证进阶装备，100 层保证最高已解锁本数的干员。'),
+    bond_x_marisa_seesShip:t('控场回复技力，6 名成员解锁总攻击与神通法真伤。'),
+  };
   const diyOperators = data.get('backups')?.units || {};
   const renderBaseOperators = baseOperators;
-  const modOperatorName = (charId) => diyOperators[charId]?.name
+  const modOperatorName = (charId) => charId === 'char_x_marisa_amiya3' ? t('阿米娅（医疗）') : diyOperators[charId]?.name
     || data.list('chess').find((c) => c?.charId === charId)?.name
     || labels[charId] || charId;
   const existingBondMemberGroups = new Map();
@@ -26,6 +75,8 @@ export function MarisaSettings({values={},disabled=false,onSave}){
 
   return html`<form class="plugin-settings mod-manager" data-testid="marisa-settings" onSubmit=${e=>{e.preventDefault();if(!disabled)onSave(settingsFromOptions(modOptions));}}>
   <strong>${t('魔理沙 MOD 管理器')}</strong><p>${t('房主应用后，加入者、观战者与重连者自动跟随房间配置。')}</p>
+  <p>${t('扩展共包含 10 位干员、3 条盟约、2 个策略和人格羁绊装备。')}</p>
+  <p>${t('人格羁绊可让装备者成为 S.E.E.S 成员；关闭 S.E.E.S 时，该装备一并关闭。')}</p>
             <details class="mod-manager__group">
               <summary>${t('已有干员的魔理沙 MOD 改动')} <span>${renderBaseOperators.length}</span></summary>
               <label><input type="checkbox" checked=${modOptions.existing.enabled} disabled=${!modEnabled} onChange=${(ev) => updateModOptions((p) => ({ ...p, existing: { ...p.existing, enabled: ev.target.checked } }))} /> ${t('启用已有干员的魔理沙 MOD 改动')}</label>
@@ -101,14 +152,14 @@ export function MarisaSettings({values={},disabled=false,onSave}){
                     ...p, bonds: { ...p.bonds, disabledIds: ev.target.checked ? p.bonds.disabledIds.filter((x) => x !== id) : [...new Set([...p.bonds.disabledIds, id])].sort() },
                   }))} />
                 </label>
+                <p>${bondDescriptions[id]}</p>
                 <div class="mod-manager__list mod-manager__list--checks mod-manager__members">
                   ${MOD_NEW_BOND_MEMBERS.filter((member) => member.bondId === id
                     && (!MOD_ADDED_OPERATORS.some((op) => op.charId === member.charId)
                       || (modOptions.additions.enabled && !modOptions.additions.disabledChars.includes(member.charId)))).map(({ charId }) => {
                     const memberId = `${id}:${charId}`;
                     const checked = modOptions.bonds.memberOverrides[memberId]
-                      ?? !!(data.list('chess').some((rec) => rec.charId === charId && rec.bonds?.includes(id))
-                        || data.get('backups')?.diy?.operators?.[charId]?.bonds?.includes(id));
+                      ?? defaultMemberChecked(id, charId);
                     return html`<label key=${memberId} title=${memberId}>
                       <span>${modOperatorName(charId)}</span>
                       <input type="checkbox" checked=${checked} disabled=${!modEnabled || !modOptions.bonds.enabled || modOptions.bonds.disabledIds.includes(id)} aria-label=${t('加入此盟约')} onChange=${(ev) => updateModOptions((p) => ({

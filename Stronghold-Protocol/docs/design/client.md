@@ -2,6 +2,10 @@
 
 Part of [DESIGN.md](../DESIGN.md) (the index; section numbers are global).
 
+Marisa manager display, 2026-10-19: offline labels cover every managed operator, alliance and strategy.
+Default alliance membership comes from the author's catalogue and the current settings draft, with explicit
+member overrides taking priority. Loading or stale room data must not change the draft's default checkmarks.
+
 ## 9. Client rendering contract (public/js/render)
 
 **Operator skins (§34.23, [SKINS.md](../SKINS.md)).** [ASSUMED] Retain received skin IDs separately from displayed

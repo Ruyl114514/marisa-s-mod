@@ -1837,5 +1837,11 @@
   "其余 {n} 个已移到 plugins/_removed/。": "The other {n} {n|was|were} moved to plugins/_removed/.",
   "已移到 plugins/_removed/：{n} 个插件": "Moved to plugins/_removed/: {n} {n|plugin|plugins}",
   "选中「{name}」": "Select \"{name}\"",
-  "符号链接的插件文件夹不能在这里删除。": "A plugin folder that is a symbolic link cannot be deleted here."
+  "符号链接的插件文件夹不能在这里删除。": "A plugin folder that is a symbolic link cannot be deleted here.",
+  "阿米娅（医疗）": "Amiya (Medic)",
+  "扩展共包含 10 位干员、3 条盟约、2 个策略和人格羁绊装备。": "This expansion includes 10 operators, 3 alliances, 2 strategies and Persona Bond equipment.",
+  "人格羁绊可让装备者成为 S.E.E.S 成员；关闭 S.E.E.S 时，该装备一并关闭。": "Persona Bond makes its wearer a S.E.E.S member. Disabling S.E.E.S also disables this equipment.",
+  "跟随其他盟约叠层，提供治疗，并将治疗转化为伤害。": "Builds stacks alongside other alliances, provides healing and converts healing into damage.",
+  "学生互助会救场；50 层保证进阶装备，100 层保证最高已解锁本数的干员。": "The Student Mutual Aid Society rescues allies. At 50 stacks, equipment is advanced; at 100, the shop guarantees an operator of the highest unlocked tier.",
+  "控场回复技力，6 名成员解锁总攻击与神通法真伤。": "Crowd control restores SP. Six members unlock All-Out Attack and Theurgy true damage."
 }
