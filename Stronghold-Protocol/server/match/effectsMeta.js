@@ -555,10 +555,10 @@ export function makeCtx(m, ps, source, hook, ev = null, preview = null) {
     pieceAt: (row, col) => { const p = Number.isInteger(row) && Number.isInteger(col) ? ps.board.get(tileKey(row, col)) : null; return p ? ps.pieceView(p, [row, col]) : null; },
     chessRecord: (id) => gd.chess(id),
     /** Bonds a chess piece counts for: its own + those granted by 变形同构体 pairings. */
-    pieceBonds: (uid, fallbackPiece = null) => {
+    pieceBonds: (uid, fallbackPiece = null, options = {}) => {
       const piece = ps.find(uid)?.piece || (source?.piece?.uid === uid ? source.piece : null)
         || (fallbackPiece?.uid === uid ? fallbackPiece : null);
-      return piece?.kind === 'chess' ? bondsOfPiece(gd, piece, ps.m?.rules) : [];
+      return piece?.kind === 'chess' ? bondsOfPiece(gd, piece, ps.m?.rules, options) : [];
     },
     pieceRange: (uid) => {
       const l = ps.find(uid);

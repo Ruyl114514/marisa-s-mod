@@ -240,6 +240,23 @@ export function grantedBondsByMorph(items, getItem, { mode = 'official', bondOk 
   return out;
 }
 
+/** An equipment record may grant one alliance on its own (Marisa's Persona Bond).
+ * Keep this separate from morph pairing so a single item never changes that rule.
+ * @param {Array<string|{id?: string}>|null|undefined} items
+ * @param {(id: string) => any} getItem
+ * @param {(id: string) => boolean} [bondOk]
+ * @returns {string[]}
+ */
+export function selfGrantedBonds(items, getItem, bondOk = () => true) {
+  const bonds = new Set();
+  for (const item of Array.isArray(items) ? items : []) {
+    const itemId = typeof item === 'string' ? item : item?.id;
+    const bondId = typeof itemId === 'string' ? getItem(itemId)?.selfGrantBondId : null;
+    if (typeof bondId === 'string' && bondId && bondOk(bondId)) bonds.add(bondId);
+  }
+  return [...bonds];
+}
+
 /**
  * Official equip-slot arithmetic, frozen and shared. slotsUsed is items.length, slotCap is equipPerChess,
  * occupies and accepts are always true, and a missing replaceUid (or one that is not equipped) is index 0.

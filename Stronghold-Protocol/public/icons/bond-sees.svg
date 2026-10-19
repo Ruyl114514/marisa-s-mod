@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="S.E.E.S">
+  <!--
+    A pure glyph: transparent background, one solid colour. The UI tints bond icons with
+    `filter: brightness(0) invert(...) sepia(...) hue-rotate(...)` (.bglyph img), which flattens every opaque pixel to a
+    single hue — so an opaque plate/disc would render as one solid blob. Keep only the lettering.
+  -->
+  <g fill="#ffffff">
+    <text x="32" y="41" text-anchor="middle" font-family="Arial Black, Arial, Helvetica, sans-serif"
+          font-size="19" font-weight="900" letter-spacing="-.6" textLength="58"
+          lengthAdjust="spacingAndGlyphs">S.E.E.S</text>
+    <rect x="4" y="48" width="56" height="3.2" rx="1.6"/>
+  </g>
+</svg>

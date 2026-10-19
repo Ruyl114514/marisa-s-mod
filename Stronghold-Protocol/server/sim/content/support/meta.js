@@ -18,6 +18,7 @@
 //                               RIGHT = col + 1; board piece views carry `dir`, sim/dir.js)
 
 import { frontOf } from '../../dir.js';
+import {selfGrantedBonds} from '../../../../shared/plugins/rules.js';
 
 export function registerSupportMeta(registry) {
   registry.global('contentb_info', {
@@ -49,14 +50,18 @@ export function registerSupportMeta(registry) {
 }
 
 /** Bonds of a piece view (own + 变形同构体 grants), as the match counts them. */
-export function metaBonds(ctx, piece) {
+export function metaBonds(ctx, piece, {equipmentGrants = true} = {}) {
   if (!piece || piece.kind !== 'chess') return [];
   // The live match owns the rule selection; this also handles the source of a removal/merge event.
-  if (Number.isInteger(piece.uid) && piece.uid > 0 && typeof ctx.pieceBonds === 'function') return ctx.pieceBonds(piece.uid, piece);
+  if (Number.isInteger(piece.uid) && piece.uid > 0 && typeof ctx.pieceBonds === 'function') return ctx.pieceBonds(piece.uid, piece, {equipmentGrants});
   const fresh = Number.isInteger(piece.uid) && piece.uid > 0 ? ctx.piece(piece.uid) : null;
   const p = fresh && fresh.kind === 'chess' ? fresh : piece;
   const rec = ctx.chessRecord(p.id);
-  return withGrants(ctx, p, rec && Array.isArray(rec.bonds) ? rec.bonds.slice() : []);
+  const bonds = rec && Array.isArray(rec.bonds) ? rec.bonds.slice() : [];
+  if (equipmentGrants) for (const bondId of selfGrantedBonds(p.items, id => ctx.gd.item(id), id => !!ctx.gd.bond(id))) {
+    if (!bonds.includes(bondId)) bonds.push(bondId);
+  }
+  return withGrants(ctx, p, bonds);
 }
 
 function withGrants(ctx, piece, bonds) {

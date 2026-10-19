@@ -3,7 +3,7 @@ import {html,Button} from './components.js';
 import {data,useData} from '../data.js';
 import {t} from '../../../shared/i18n.js';
 import {MOD_EXISTING_OPERATOR_IDS,MOD_ADDED_OPERATORS,MOD_BOND_IDS,MOD_NEW_BOND_MEMBERS,MOD_STRATEGY_IDS,enabledModBondMembers,normalizeModOptions,optionsFromSettings,settingsFromOptions} from '../../../shared/plugins/marisaProfile.js';
-const labels={char_x_marisa_makoto:'结城理',char_x_marisa_amiya3:'阿米娅（医疗）'}; // i18n-ignore: fallback game names; loaded records provide localized names.
+const labels={"char_196_sunbr":"古米","char_171_bldsk":"华法琳","char_x_marisa_makoto":"结城理","char_1015_aglna2":"予愿安洁莉娜","char_1052_kalts2":"凯尔希·思衡托","char_x_marisa_amiya3":"阿米娅","char_x_marisa_headbr":"凛冬","char_1051_headb2":"怒潮凛冬","char_188_helage":"赫拉格","char_x_marisa_kormr":"虎狼丸","char_x_marisa_aigis":"埃癸斯","char_x_marisa_yukari":"岳羽由加莉","bond_x_marisa_rhodeShip":"罗德岛","bond_x_marisa_seesShip":"S.E.E.S","bond_x_marisa_uniteShip":"我们联合","band_x_marisa_kun":"鲲","band_x_marisa_unite":"怒潮凛冬"}; // i18n-ignore: fallback game names; loaded records provide localized names.
 export function MarisaSettings({values={},disabled=false,onSave}){
   useData('chess','backups','bonds');
   const initial=optionsFromSettings(values),signature=JSON.stringify(initial);
@@ -11,7 +11,7 @@ export function MarisaSettings({values={},disabled=false,onSave}){
   useEffect(()=>setOptions(initial),[signature]);
   const modEnabled=!disabled,managerDataReady=true;
   const updateModOptions=fn=>setOptions(p=>normalizeModOptions(fn(p)));
-  const baseOperators=MOD_EXISTING_OPERATOR_IDS.map(charId=>({charId,name:data.get('backups')?.units?.[charId]?.name||data.list('chess').find(c=>c.charId===charId)?.name||charId}));
+  const baseOperators=MOD_EXISTING_OPERATOR_IDS.map(charId=>({charId,name:data.get('backups')?.units?.[charId]?.name||data.list('chess').find(c=>c.charId===charId)?.name||labels[charId]||charId}));
   const diyOperators = data.get('backups')?.units || {};
   const renderBaseOperators = baseOperators;
   const modOperatorName = (charId) => diyOperators[charId]?.name
@@ -96,7 +96,7 @@ export function MarisaSettings({values={},disabled=false,onSave}){
               <p>${t('成员开关优先于干员的原版或 MOD 选择，只改变盟约归属；盟约总开关关闭时所有成员均不生效。')}</p>
               ${MOD_BOND_IDS.map((id) => html`<div class="mod-manager__bond" key=${id}>
                 <label title=${id}>
-                  <span>${data.lookup('bonds', id)?.name || (id === 'bond_x_marisa_rhodeShip' ? t('罗德岛') : id)}</span>
+                  <span>${data.lookup('bonds', id)?.name || labels[id] || id}</span>
                   <input type="checkbox" checked=${modOptions.bonds.enabled && !modOptions.bonds.disabledIds.includes(id)} disabled=${!modEnabled || !modOptions.bonds.enabled} onChange=${(ev) => updateModOptions((p) => ({
                     ...p, bonds: { ...p.bonds, disabledIds: ev.target.checked ? p.bonds.disabledIds.filter((x) => x !== id) : [...new Set([...p.bonds.disabledIds, id])].sort() },
                   }))} />
@@ -124,7 +124,7 @@ export function MarisaSettings({values={},disabled=false,onSave}){
               <label><input type="checkbox" checked=${modOptions.strategies.enabled} disabled=${!modEnabled} onChange=${(ev) => updateModOptions((p) => ({ ...p, strategies: { ...p.strategies, enabled: ev.target.checked } }))} /> ${t('启用追加策略')}</label>
               <div class="mod-manager__list mod-manager__list--checks">
                 ${MOD_STRATEGY_IDS.map((id) => html`<label key=${id} title=${id}>
-                  <span>${data.lookup('bands', id)?.name || (id === 'band_x_marisa_kun' ? t('鲲') : id)}</span>
+                  <span>${data.lookup('bands', id)?.name || labels[id] || id}</span>
                   <input type="checkbox" checked=${modOptions.strategies.enabled && !modOptions.strategies.disabledIds.includes(id)} disabled=${!modEnabled || !modOptions.strategies.enabled} onChange=${(ev) => updateModOptions((p) => ({
                     ...p, strategies: { ...p.strategies, disabledIds: ev.target.checked ? p.strategies.disabledIds.filter((x) => x !== id) : [...new Set([...p.strategies.disabledIds, id])].sort() },
                   }))} />

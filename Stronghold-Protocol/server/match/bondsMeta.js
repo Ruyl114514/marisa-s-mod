@@ -24,7 +24,7 @@
 // Layers (`ps.layers[bondId]`) persist the whole match; they are reported for every bond but only matter while active.
 
 import { layerGainRoom } from '../../shared/constants.js';
-import { grantedBondsByMorph, ruleOption } from '../../shared/plugins/rules.js';
+import { grantedBondsByMorph, selfGrantedBonds, ruleOption } from '../../shared/plugins/rules.js';
 
 export const HARMONY_BOND = 'maniShip';
 export const DEPUTY_BOND = 'deputShip';
@@ -36,10 +36,13 @@ export const DEPUTY_BOND = 'deputShip';
  * @param {Record<string, string>|null} [rules] the room's rule switches; omitted keeps the official pairing
  * @returns {string[]}
  */
-export function pieceBonds(gd, piece, rules = null) {
+export function pieceBonds(gd, piece, rules = null, {equipmentGrants = true} = {}) {
   const c = gd.chess(piece.id);
   const out = c && Array.isArray(c.bonds) ? c.bonds.slice() : [];
   const items = Array.isArray(piece.items) ? piece.items : [];
+  for (const bondId of equipmentGrants ? selfGrantedBonds(items, id => gd.item(id), id => !!gd.bond(id)) : []) {
+    if (!out.includes(bondId)) out.push(bondId);
+  }
   const mode = ruleOption(rules, 'morphPairing');
   for (const b of grantedBondsByMorph(items, (id) => gd.item(id), { mode, bondOk: (id) => !!gd.bond(id) })) {
     if (!out.includes(b)) out.push(b);

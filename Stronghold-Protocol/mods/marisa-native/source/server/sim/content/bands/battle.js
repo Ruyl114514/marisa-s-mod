@@ -31,13 +31,21 @@
 //                                               elite or not) stand on the field get ATK +atk
 //   act2autochess_band3_buff  伊奥莱塔 统御号令 at combat start n = elite operators on the field ⇒ every elite operator
 //                                               ATK +atk_per_cnt × n, HP +max_hp_per_cnt × n (all 直接乘算)
-// MOD_band_kun: after three lethal devours, revive the victims and give the last credited devourer liftoff and anti-air.
+//   MOD_band_kun               鲲 化鲲为鹏（只因） the 阿戈尔 bond's devour (bonds/core.js devour) knocks out devour_count (3)
+//                                               operators ⇒ the operators it knocked out revive in place at once, free — a
+//                                               new deployment (bond:indomShip's "下次部署的再部署时间和费用归零") — and the
+//                                               阿戈尔 the devour credits with the knock-out that reaches the count takes
+//                                               off (起飞: blocks no ground unit, blocks air units, hits both) — once per
+//                                               battle
 //   auto_chess_change_map     Touch 外勤医疗    "所有玩家场地上出现一名<预备干员-医疗>": once selected in this match, its
 //                                               retained team grant gives every player's field the map character of the
 //                                               variant whose common_condition holds for that player's elites on the field
 //                                               (condition_golden_chess_le cnt → 预备干员-医疗, _ge cnt → Touch), spawned at
 //                                               combat start on its stage slot (tokens.spawnMapChar). [ASSUMED] that slot's
 //                                               aggroSeq precedes ordinary initial operators; deploySeq stays the runtime spawn
+//   MOD_band_unite            怒潮凛冬 我们联合   from round 6 on a whole-field cold wind every 25 s for 20 s (the plain
+//                                               谢拉格 helper, no layer scaling); every operator ATK +30 % (面板攻击力 =
+//                                               直接乘算 atkPct) and SP recovery ×0.8. See the handler's own comment.
 // Prep-only bands (economy / shop / grants / layers at prep end or round start) live in bands/meta.js.
 
 import {
@@ -46,6 +54,7 @@ import {
 } from '../support/index.js';
 import { weaknessRetype, addShieldLayer, PRIO_RESPAWN, reviveNow } from '../items/battle.js';
 import { spawnMapChar } from '../tokens.js';
+import { startColdWind } from '../devices.js';
 
 export const AMEDIC_BAND = 'band_amedic';
 /**
@@ -59,6 +68,13 @@ const deployedOps = (battle, pid) => playerOps(battle, pid, { fieldOnly: true })
 
 /** DamageInfo tag the 阿戈尔 devour puts on its 5000 物理流失 (bonds/core.js devour: `battle.loseHp(…, { tags: ['bond:egir:devour'] })`). */
 const DEVOUR_TAG = 'bond:egir:devour';
+
+/** 我们联合 (MOD_band_unite): the owner's literal numbers, used only when the band blackboard does not carry them. */
+const UNITE_WIND_ROUND = 6;
+const UNITE_WIND_INTERVAL = 25;
+const UNITE_WIND_DURATION = 20;
+const UNITE_ATK_PCT = 0.3;
+const UNITE_SP_RECOVERY_MUL = 0.8;
 
 // ---------------------------------------------------------------------------------------------------------------
 // band buff behaviours: (battle, ps, params, bandId)
@@ -282,6 +298,46 @@ const BY_KEY = {
       }
       if (hitFly) { by.profile.canHitFly = true; by.profile.groundOnly = false; }
     });
+  },
+
+  // 怒潮凛冬 我们联合（MOD）— the whole strategy is battle-side (one BY_KEY key, three sub-effects).
+  //
+  //   凛冬将至       from round 6 on, a cold wind over the whole field every 25 s for 20 s (devices.startColdWind —
+  //                  the same helper 谢拉格's kjeragColdWind uses, minus its layer scaling: the duration is the plain
+  //                  constant 20, never a function of the layers; `ownerOnly` is not passed, so every enemy on the field
+  //                  is chilled, as for 谢拉格). `battle.round` is fixed when the Battle is built (Battle.js:81, from
+  //                  Match's `this.round`) and never changes during a battle — one round = one Battle — so the check is
+  //                  made ONCE, here at install time: round ≥ 6 installs the wind for the whole battle (its first gust at
+  //                  t = 25 s, the helper's `first` default), round < 6 installs nothing at all. Re-checking per round is
+  //                  impossible inside a battle and re-checking per tick would be a no-op; this is the faithful reading.
+  //                  The wind's rendering rides the existing `coldWind` fx kind (free 暴风雪 visual).
+  //   身后就是莫斯科  every operator of the player ATK +30 % — 面板攻击力, i.e. a 直接乘算 percentage (support
+  //                  directMods → atkPct, summed with every other 直接乘算), NOT dmgDealtMul (the owner's ruling).
+  //   乌萨斯的后勤    every operator of the player SP recovery ×0.8 (buffs.js MUL_KEYS `spRecoveryMul`; units.js:180
+  //                  computes `(base + ΣspRecoveryFlat) × ΠspRecoveryMul`, so 0.8 is exactly −20 % and a multiplier
+  //                  below 1 is applied as it is — the precedent of kits/ops/op-zumama.js:115).
+  //
+  // The numbers are read from the band blackboard (`p.atk`, `p.sp_recovery_mul`, `p.round`, `p.interval`, `p.duration`)
+  // and fall back to the owner's literal values, so a declaration that spells a key differently (or predates it) still
+  // behaves as specified. 直接乘算 / 乘算 buffs are standing (`passiveBuff`: persist + allowDead + replace by key), so
+  // they cover every operator of the player for the whole battle, exactly like 阿米娅's 众志合一.
+  MOD_band_unite(battle, ps, p, bandId) {
+    const round = Math.max(1, Math.floor(num(p.round, UNITE_WIND_ROUND)));
+    if (battle.round >= round) {
+      startColdWind(battle, {
+        playerId: ps.playerId,
+        interval: Math.max(0, num(p.interval, UNITE_WIND_INTERVAL)),
+        duration: Math.max(0, num(p.duration, UNITE_WIND_DURATION)),
+      });
+    }
+    const atk = num(p.atk, UNITE_ATK_PCT);
+    const spMul = Math.max(0, num(p.sp_recovery_mul, UNITE_SP_RECOVERY_MUL));
+    const key = keyOf(bandId);
+    if (atk) {
+      const mods = directMods({ atk });
+      for (const u of playerOps(battle, ps.playerId)) passiveBuff(battle, u, key, mods);
+    }
+    if (spMul !== 1) for (const u of playerOps(battle, ps.playerId)) passiveBuff(battle, u, keyOf(bandId, 'sp'), { spRecoveryMul: spMul });
   },
 };
 

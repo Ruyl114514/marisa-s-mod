@@ -3,7 +3,7 @@
 import { int, isObj } from './shared.js';
 import { diyPicks } from './diy.js';
 import { t } from '../../../../shared/i18n.js';
-import { grantedBondsByMorph } from '../../../../shared/plugins/rules.js';
+import { grantedBondsByMorph, selfGrantedBonds } from '../../../../shared/plugins/rules.js';
 
 
 // ---- bonds -------------------------------------------------------------------------------------------
@@ -78,6 +78,7 @@ export function grantedBonds(items, getItem = () => null, mode = 'official') {
  */
 export function pieceBondIds(chess, items, getItem = () => null, mode = 'official') {
   const out = (Array.isArray(chess?.bonds) ? chess.bonds : []).filter((b) => typeof b === 'string');
+  for (const bondId of selfGrantedBonds(items, getItem)) if (!out.includes(bondId)) out.push(bondId);
   for (const b of grantedBonds(items, getItem, mode)) if (!out.includes(b)) out.push(b);
   return out;
 }

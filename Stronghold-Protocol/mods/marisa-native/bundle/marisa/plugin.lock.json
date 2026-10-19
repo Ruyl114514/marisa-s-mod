@@ -9,24 +9,24 @@
       "bytes": 378
     },
     "data/profile.json": {
-      "sha256": "bb575a64cb969d3576992b7cea4e71978d4e65c006817348665b64356f1d3862",
-      "bytes": 4736937
+      "sha256": "51259bd6752774cf27eac7eaf1b25c3df556124755339972a0cb2192c5702dc1",
+      "bytes": 5061382
     },
     "guard.json": {
       "sha256": "922fda47860a66dfaec7393ce9e36c2359171045bda3113e6dd4bd958c96f4dc",
       "bytes": 1220
     },
     "plugin.json": {
-      "sha256": "984bc358597b4b7ee02ba519cc3eb907a7e7d86265e16580c38654dac4731bd9",
-      "bytes": 6876
+      "sha256": "be24ae6503fde476696991d75f8cd5a4bc92ec7cedfda65fcaad3b1a3f6658f6",
+      "bytes": 5880
     },
     "sim/index.js": {
-      "sha256": "dc419770190e6ee53b4f68ef6fb997caae4b15cc8fb5e7853d7a681afe40c9fc",
-      "bytes": 292018
+      "sha256": "7d3b31381dd3209040ab86c7420c28c01baf1d44d357b90bc5cbe415cd2db95e",
+      "bytes": 346081
     },
     "test/guard.test.js": {
-      "sha256": "d448d03fafe4a4447cbe985e192dacbfdb68d421feaae1ef06e5182755bd0567",
-      "bytes": 16821
+      "sha256": "58b5b37e707aa8154f73bf2471fe74ccf428ad8a9486c9b36820a6d1e3e38c72",
+      "bytes": 19375
     }
   },
   "spine": {}

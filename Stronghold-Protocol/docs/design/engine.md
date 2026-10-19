@@ -2,6 +2,11 @@
 
 Part of [DESIGN.md](../DESIGN.md) (the index; section numbers are global).
 
+Marisa 2026-10-19: equipment `selfGrantBondId` grants membership independently of morph pairing through
+`shared/plugins/rules.js selfGrantedBonds`. Prep counts, battle membership and UI chips use the same rule.
+The native plugin installs the new alliances, strategies and layer-based item bonus; the host engine and protocol
+retain their structure. See [the adaptation record](../MARISA-AUTHOR-20261019.md).
+
 ## 5. Simulation (server/sim) — engine contract
 
 联防 restoration (§30.13): the initial setup establishes buffs and devour attributes before restoring living

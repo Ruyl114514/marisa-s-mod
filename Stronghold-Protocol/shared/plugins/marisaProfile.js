@@ -7,11 +7,18 @@ const MOD_OPERATORS = Object.freeze([
   Object.freeze({ charId: 'char_1015_aglna2', chessId: 'chess_x_marisa_aglna2_a', type: 'existing' }),
   Object.freeze({ charId: 'char_1052_kalts2', chessId: 'chess_x_marisa_kalts2_a', type: 'existing' }),
   Object.freeze({ charId: 'char_x_marisa_amiya3', chessId: 'chess_x_marisa_amiya3_a', type: 'addition' }),
+  Object.freeze({ charId: 'char_x_marisa_headbr', chessId: 'chess_x_marisa_headbr_a', type: 'addition' }),
+  Object.freeze({ charId: 'char_1051_headb2', chessId: 'chess_x_marisa_headb2_a', type: 'existing' }),
+  Object.freeze({ charId: 'char_188_helage', chessId: 'chess_x_marisa_helage_a', type: 'existing' }),
+  Object.freeze({ charId: 'char_x_marisa_kormr', chessId: 'chess_x_marisa_kormr_a', type: 'addition' }),
+  Object.freeze({ charId: 'char_x_marisa_aigis', chessId: 'chess_x_marisa_aigis_a', type: 'addition' }),
+  Object.freeze({ charId: 'char_x_marisa_yukari', chessId: 'chess_x_marisa_yukari_a', type: 'addition' }),
 ]);
 export const MOD_ADDED_OPERATORS = Object.freeze(MOD_OPERATORS.filter((op) => op.type === 'addition'));
 export const MOD_EXISTING_VARIANTS = Object.freeze(MOD_OPERATORS.filter((op) => op.type === 'existing'));
 export const MOD_EXISTING_OPERATOR_IDS = Object.freeze([
   'char_171_bldsk', // Warfarin gains the new Rhode Island affiliation.
+  'char_196_sunbr', // Gummy gains the Students' Union affiliation and garrison.
   'char_003_kalts', 'char_4179_monstr', 'char_4195_radian', 'char_4228_closur', 'char_4230_mcnist', // Existing DIY candidates gain Rhode Island.
   ...MOD_EXISTING_VARIANTS.map((op) => op.charId),
 ]);
@@ -25,16 +32,24 @@ export const MOD_ADDED_BOND_MEMBERS = Object.freeze([
   Object.freeze({ bondId: 'miraShip', charId: 'char_1015_aglna2' }),
   Object.freeze({ bondId: 'visiShip', charId: 'char_x_marisa_amiya3' }),
   Object.freeze({ bondId: 'emptyShip', charId: 'char_1052_kalts2' }),
+  Object.freeze({ bondId: 'steadShip', charId: 'char_x_marisa_headbr' }),
+  Object.freeze({ bondId: 'emptyShip', charId: 'char_1051_headb2' }),
+  Object.freeze({ bondId: 'emptyShip', charId: 'char_188_helage' }),
 ]);
 export const MOD_ADDED_BOND_MEMBER_IDS = Object.freeze(MOD_ADDED_BOND_MEMBERS.map(({ bondId, charId }) => `${bondId}:${charId}`));
-// This profile introduces only Rhode Island. Existing alliances are managed via MOD_ADDED_BOND_MEMBERS above.
-export const MOD_BOND_IDS = Object.freeze(['bond_x_marisa_rhodeShip']);
+// Keep this order stable: native settings encode membership selections by their catalogue index.
+export const MOD_BOND_IDS = Object.freeze(['bond_x_marisa_rhodeShip', 'bond_x_marisa_seesShip', 'bond_x_marisa_uniteShip']);
 export const MOD_NEW_BOND_MEMBERS = Object.freeze([
-  'char_171_bldsk', 'char_1052_kalts2', 'char_x_marisa_amiya3',
+  ...['char_171_bldsk', 'char_1052_kalts2', 'char_x_marisa_amiya3',
   'char_003_kalts', 'char_4179_monstr', 'char_4195_radian', 'char_4228_closur', 'char_4230_mcnist',
-].map((charId) => Object.freeze({ bondId: 'bond_x_marisa_rhodeShip', charId })));
+  ].map((charId) => Object.freeze({ bondId: 'bond_x_marisa_rhodeShip', charId })),
+  ...['char_x_marisa_makoto', 'char_x_marisa_kormr', 'char_x_marisa_aigis', 'char_x_marisa_yukari']
+    .map(charId => Object.freeze({bondId: 'bond_x_marisa_seesShip', charId})),
+  ...['char_196_sunbr', 'char_x_marisa_headbr', 'char_1051_headb2', 'char_188_helage']
+    .map(charId => Object.freeze({bondId: 'bond_x_marisa_uniteShip', charId})),
+]);
 const NEW_BOND_MEMBER_IDS = new Set(MOD_NEW_BOND_MEMBERS.map(({ bondId, charId }) => `${bondId}:${charId}`));
-export const MOD_STRATEGY_IDS = Object.freeze(['band_x_marisa_kun']);
+export const MOD_STRATEGY_IDS = Object.freeze(['band_x_marisa_kun', 'band_x_marisa_unite']);
 
 export const validMods = (v) => Array.isArray(v) && v.length <= 1 && (v.length === 0 || v[0] === MOD_ID);
 export const profileBase = (mods) => validMods(mods) && mods.length ? '/data/mods/marisa/' : '/data/';
@@ -250,6 +265,7 @@ export function composeModData(base, extended, rawOptions = null) {
         diy.locked[tier][charId] = {
           skillIndex: source.backup?.skillIndex ?? 0, uniEquipId: null, from: [sourceId], exclusive: true,
           modKitId: `chess_${charId}`, bonds: list(row?.bonds || source.bonds), displayTokens: list(source.tokens),
+          garrisonIds: list(source.garrisonIds),
         };
       }
       if (!base.backups?.diy?.operators?.[charId]) diy.operators[charId] = {
@@ -315,7 +331,9 @@ export function composeModData(base, extended, rawOptions = null) {
   }
 
   if (out.bonds) {
-    if (disabledBonds.has('bond_x_marisa_rhodeShip') && !base.bonds?.bond_x_marisa_rhodeShip) delete out.bonds.bond_x_marisa_rhodeShip;
+    for (const bondId of disabledBonds) {
+      if (!base.bonds?.[bondId]) delete out.bonds[bondId];
+    }
     for (const [bondId, bond] of Object.entries(out.bonds)) {
       const prior = list(bond.members);
       const members = prior.filter((id) => {
@@ -344,7 +362,17 @@ export function composeModData(base, extended, rawOptions = null) {
     for (const id of Object.keys(out.tokens)) if (!base.tokens?.[id] && !usedTokens.has(id)) delete out.tokens[id];
   }
 
-  if (out.effects && out.bonds && disabledBonds.has('bond_x_marisa_rhodeShip') && !base.effects?.effect_x_marisa_rhode) delete out.effects.effect_x_marisa_rhode;
+  // An equipment grant must never point at a disabled alliance. Its two forms and effects
+  // belong to S.E.E.S, so remove them together when that alliance is disabled.
+  for (const [id, item] of Object.entries(out.items ?? {})) {
+    if (!disabledBonds.has(item.selfGrantBondId) || base.items?.[id]) continue;
+    delete out.items[id];
+    if (!base.effects?.[item.effectId]) delete out.effects?.[item.effectId];
+  }
+  for (const bondId of disabledBonds) {
+    const effectId = extended.bonds?.[bondId]?.effectId;
+    if (effectId && !base.effects?.[effectId]) delete out.effects?.[effectId];
+  }
   const disabledStrategies = new Set(options.strategies.enabled ? options.strategies.disabledIds : MOD_STRATEGY_IDS);
   for (const id of disabledStrategies) {
     const band = out.bands?.[id];
@@ -370,40 +398,102 @@ export function contentHash(data) {
   return a.toString(16).padStart(8, '0') + b.toString(16).padStart(8, '0');
 }
 
+// Native settings stay within the host's existing 32-setting limit.
+// Only the transport uses integer masks; the manager and composition keep named ID lists.
 
-// Native plugin settings preserve the old manager's priority rules without storing executable expressions.
-export const MARISA_SETTINGS = {
-  existing: { type:'boolean', default:true, label:{zh:'启用已有干员改动',en:'Enable existing operator changes'} },
-  additions: { type:'boolean', default:true, label:{zh:'启用追加干员',en:'Enable added operators'} },
-  bonds: { type:'boolean', default:true, label:{zh:'启用追加盟约',en:'Enable added alliances'} },
-  rhode: { type:'boolean', default:true, label:{zh:'罗德岛',en:'Rhodes Island'} },
-  strategies: { type:'boolean', default:true, label:{zh:'启用追加策略',en:'Enable added strategies'} },
-  kun: { type:'boolean', default:true, label:{zh:'鲲',en:'Kun'} },
+
+const BOND_SETTINGS = {
+  rhode: 'bond_x_marisa_rhodeShip',
+  sees: 'bond_x_marisa_seesShip',
+  unite: 'bond_x_marisa_uniteShip',
 };
-for(const id of MOD_EXISTING_OPERATOR_IDS) MARISA_SETTINGS['op_'+id.split('_').at(-1)]={type:'enum',options:['mod','original'],default:'mod',label:{zh:id}};
-for(const {charId} of MOD_ADDED_OPERATORS) MARISA_SETTINGS['add_'+charId.split('_').at(-1)]={type:'enum',options:['shop','diy','disabled'],default:'shop',label:{zh:charId}};
-for(const {bondId,charId} of MOD_ADDED_BOND_MEMBERS) MARISA_SETTINGS['m_'+bondId+'_'+charId.split('_').at(-1)]={type:'boolean',default:true,label:{zh:bondId+' / '+charId}};
-for(const {bondId,charId} of MOD_NEW_BOND_MEMBERS) MARISA_SETTINGS['n_'+charId.split('_').at(-1)]={type:'enum',options:['default','yes','no'],default:'default',label:{zh:bondId+' / '+charId}};
-export function optionsFromSettings(s={}) {
-  const o=defaultModOptions();
-  o.existing.enabled=s.existing!==false;
-  o.existing.vanillaChars=MOD_EXISTING_OPERATOR_IDS.filter(id=>s['op_'+id.split('_').at(-1)]==='original');
-  o.additions.enabled=s.additions!==false;
-  o.additions.disabledChars=MOD_ADDED_OPERATORS.filter(({charId})=>s['add_'+charId.split('_').at(-1)]==='disabled').map(x=>x.charId);
-  o.additions.diyChars=MOD_ADDED_OPERATORS.filter(({charId})=>s['add_'+charId.split('_').at(-1)]==='diy').map(x=>x.charId);
-  o.bonds.enabled=s.bonds!==false;
-  o.bonds.disabledIds=s.rhode===false?[...MOD_BOND_IDS]:[];
-  o.existingBondMembers.disabledIds=MOD_ADDED_BOND_MEMBERS.filter(({bondId,charId})=>s['m_'+bondId+'_'+charId.split('_').at(-1)]===false).map(({bondId,charId})=>bondId+':'+charId);
-  for(const {bondId,charId} of MOD_NEW_BOND_MEMBERS){const v=s['n_'+charId.split('_').at(-1)];if(v==='yes'||v==='no')o.bonds.memberOverrides[bondId+':'+charId]=v==='yes';}
-  o.strategies.enabled=s.strategies!==false;
-  o.strategies.disabledIds=s.kun===false?[...MOD_STRATEGY_IDS]:[];
-  return normalizeModOptions(o);
+const STRATEGY_SETTINGS = {kun: 'band_x_marisa_kun', uniteBand: 'band_x_marisa_unite'};
+const suffixOf = id => id.split('_').at(-1);
+const memberId = ({bondId, charId}) => `${bondId}:${charId}`;
+const booleanSetting = label => ({type: 'boolean', default: true, label: {zh: label}});
+const enumSetting = (label, options, initial) => ({type: 'enum', options, default: initial, label: {zh: label}});
+const membershipSetting = (label, members) => ({
+  type: 'integer', min: 0, max: 2 ** members.length - 1, default: 0, label: {zh: label},
+});
+
+// Catalogue order is part of the saved-settings format. Append new members at the end.
+// Arithmetic avoids JavaScript's signed 32-bit bitwise conversion.
+function encodeMembers(members, selected) {
+  return members.reduce((mask, member, index) => selected(member) ? mask + 2 ** index : mask, 0);
 }
-export function settingsFromOptions(raw){
-  const o=normalizeModOptions(raw),s={existing:o.existing.enabled,additions:o.additions.enabled,bonds:o.bonds.enabled,rhode:!o.bonds.disabledIds.length,strategies:o.strategies.enabled,kun:!o.strategies.disabledIds.length};
-  for(const id of MOD_EXISTING_OPERATOR_IDS)s['op_'+id.split('_').at(-1)]=o.existing.vanillaChars.includes(id)?'original':'mod';
-  for(const {charId} of MOD_ADDED_OPERATORS)s['add_'+charId.split('_').at(-1)]=o.additions.disabledChars.includes(charId)?'disabled':o.additions.diyChars.includes(charId)?'diy':'shop';
-  for(const {bondId,charId} of MOD_ADDED_BOND_MEMBERS)s['m_'+bondId+'_'+charId.split('_').at(-1)]=!o.existingBondMembers.disabledIds.includes(bondId+':'+charId);
-  for(const {bondId,charId} of MOD_NEW_BOND_MEMBERS){const v=o.bonds.memberOverrides[bondId+':'+charId];s['n_'+charId.split('_').at(-1)]=v===undefined?'default':v?'yes':'no';}
-  return s;
+function decodeMembers(members, mask = 0) {
+  return members.filter((member, index) => Math.floor(mask / 2 ** index) % 2 === 1);
+}
+
+export const MARISA_SETTINGS = {
+  existing: booleanSetting('启用已有干员改动'),
+  additions: booleanSetting('启用追加干员'),
+  bonds: booleanSetting('启用追加盟约'),
+  rhode: booleanSetting('罗德岛'),
+  sees: booleanSetting('S.E.E.S'),
+  unite: booleanSetting('我们联合'),
+  strategies: booleanSetting('启用追加策略'),
+  kun: booleanSetting('鲲'),
+  uniteBand: booleanSetting('怒潮凛冬'),
+};
+for (const charId of MOD_EXISTING_OPERATOR_IDS) {
+  MARISA_SETTINGS[`op_${suffixOf(charId)}`] = enumSetting(charId, ['mod', 'original'], 'mod');
+}
+for (const {charId} of MOD_ADDED_OPERATORS) {
+  MARISA_SETTINGS[`add_${suffixOf(charId)}`] = enumSetting(charId, ['shop', 'diy', 'disabled'], 'shop');
+}
+MARISA_SETTINGS.memberOff = membershipSetting('原版盟约成员选择', MOD_ADDED_BOND_MEMBERS);
+MARISA_SETTINGS.memberYes = membershipSetting('追加盟约加入选择', MOD_NEW_BOND_MEMBERS);
+MARISA_SETTINGS.memberNo = membershipSetting('追加盟约移除选择', MOD_NEW_BOND_MEMBERS);
+
+export function optionsFromSettings(settings = {}) {
+  const options = defaultModOptions();
+  options.existing.enabled = settings.existing !== false;
+  options.existing.vanillaChars = MOD_EXISTING_OPERATOR_IDS.filter(id => settings[`op_${suffixOf(id)}`] === 'original');
+  options.additions.enabled = settings.additions !== false;
+  options.additions.disabledChars = MOD_ADDED_OPERATORS.filter(({charId}) => settings[`add_${suffixOf(charId)}`] === 'disabled').map(op => op.charId);
+  options.additions.diyChars = MOD_ADDED_OPERATORS.filter(({charId}) => settings[`add_${suffixOf(charId)}`] === 'diy').map(op => op.charId);
+  options.bonds.enabled = settings.bonds !== false;
+  options.bonds.disabledIds = Object.entries(BOND_SETTINGS).filter(([key]) => settings[key] === false).map(([, id]) => id);
+  options.strategies.enabled = settings.strategies !== false;
+  options.strategies.disabledIds = Object.entries(STRATEGY_SETTINGS).filter(([key]) => settings[key] === false).map(([, id]) => id);
+  options.existingBondMembers.disabledIds = decodeMembers(MOD_ADDED_BOND_MEMBERS, settings.memberOff).map(memberId);
+  for (const member of decodeMembers(MOD_NEW_BOND_MEMBERS, settings.memberYes)) options.bonds.memberOverrides[memberId(member)] = true;
+  for (const member of decodeMembers(MOD_NEW_BOND_MEMBERS, settings.memberNo)) options.bonds.memberOverrides[memberId(member)] = false;
+
+  // Read the old manager's individual member keys when importing saved preferences.
+  if (settings.memberOff === undefined) {
+    options.existingBondMembers.disabledIds = MOD_ADDED_BOND_MEMBERS.filter(({bondId, charId}) =>
+      settings[`m_${bondId}_${suffixOf(charId)}`] === false).map(memberId);
+  }
+  if (settings.memberYes === undefined && settings.memberNo === undefined) {
+    for (const member of MOD_NEW_BOND_MEMBERS.filter(member => member.bondId === BOND_SETTINGS.rhode)) {
+      const value = settings[`n_${suffixOf(member.charId)}`];
+      if (value === 'yes' || value === 'no') options.bonds.memberOverrides[memberId(member)] = value === 'yes';
+    }
+  }
+  return normalizeModOptions(options);
+}
+
+export function settingsFromOptions(raw) {
+  const options = normalizeModOptions(raw);
+  const settings = {
+    existing: options.existing.enabled,
+    additions: options.additions.enabled,
+    bonds: options.bonds.enabled,
+    strategies: options.strategies.enabled,
+  };
+  for (const [key, id] of Object.entries(BOND_SETTINGS)) settings[key] = !options.bonds.disabledIds.includes(id);
+  for (const [key, id] of Object.entries(STRATEGY_SETTINGS)) settings[key] = !options.strategies.disabledIds.includes(id);
+  for (const charId of MOD_EXISTING_OPERATOR_IDS) {
+    settings[`op_${suffixOf(charId)}`] = options.existing.vanillaChars.includes(charId) ? 'original' : 'mod';
+  }
+  for (const {charId} of MOD_ADDED_OPERATORS) {
+    settings[`add_${suffixOf(charId)}`] = options.additions.disabledChars.includes(charId) ? 'disabled'
+      : options.additions.diyChars.includes(charId) ? 'diy' : 'shop';
+  }
+  settings.memberOff = encodeMembers(MOD_ADDED_BOND_MEMBERS, member => options.existingBondMembers.disabledIds.includes(memberId(member)));
+  settings.memberYes = encodeMembers(MOD_NEW_BOND_MEMBERS, member => options.bonds.memberOverrides[memberId(member)] === true);
+  settings.memberNo = encodeMembers(MOD_NEW_BOND_MEMBERS, member => options.bonds.memberOverrides[memberId(member)] === false);
+  return settings;
 }

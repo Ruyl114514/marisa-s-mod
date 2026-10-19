@@ -52,8 +52,8 @@ test('every generated attack/hit reference resolves to a valid pool and its sele
       }
     }
   }
-  assert.equal(refs, 962); // Official 0.3.1: 952; Marisa's medic Amiya and Makoto retain ten extra roles.
-  assert.equal(Object.keys(pools).length, 951); // Official 941 pools plus ten distinct MOD operator banks.
+  assert.equal(refs, 990); // Official 952 + ten earlier roles + nine new roles, with 19 namespaced aliases.
+  assert.equal(Object.keys(pools).length, 960); // Official 941 + ten earlier MOD banks + nine new author banks.
   const p = pools[units.char_4064_mlynar.attackPools[2]];
   assert.equal(p.sounds['player/p_imp/p_imp_loyalsword_h.mp3'].delay, 0.1);
 });
@@ -62,6 +62,13 @@ test('all exported pools match the cached official bank limits, pitches and dela
   const raw = JSON.parse(readFileSync(official, 'utf8'));
   const banks = new Map(raw.soundFXBanks.map(b => [b.name, b]));
   for (const [id, pool] of Object.entries(manifest.audio.sfx.pools)) {
+    if (id.startsWith('marisa.')) {
+      // The author supplies literal custom files without official bank metadata.
+      assert.equal(pool.maxSoundAllowed, 2);
+      assert.equal(pool.popOldest, false);
+      for (const sound of Object.values(pool.sounds)) assert.deepEqual(sound, {minPitch: 1, maxPitch: 1, delay: 0});
+      continue;
+    }
     const bank = banks.get(id);
     assert.ok(bank, id);
     assert.equal(pool.maxSoundAllowed, bank.maxSoundAllowed, id);

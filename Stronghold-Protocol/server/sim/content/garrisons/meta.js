@@ -110,7 +110,8 @@ H.SERVER_ADD_BOND = {
 H.SERVER_ADD_BOND_CHESS_ALL = {
   run(ctx) {
     const { bb, garrison } = ctx.source;
-    addAll(ctx, metaBonds(ctx, ctx.source.piece), num(bb.count), requireActiveOf(garrison));
+    // Persona Bond grants membership, but does not add a new target to this garrison's layer gain.
+    addAll(ctx, metaBonds(ctx, ctx.source.piece, {equipmentGrants: false}), num(bb.count), requireActiveOf(garrison));
   },
 };
 
@@ -164,7 +165,7 @@ H.SERVER_ADD_BOND_IN_HAND = {
     const n = num(ctx.source.bb.count);
     for (const p of ctx.hand()) {
       if (!p || p.kind !== 'chess') continue;
-      for (const b of metaBonds(ctx, p)) if (ctx.bondActive(b)) ctx.addLayers(b, n, { requireActive: true });
+      for (const b of metaBonds(ctx, p, {equipmentGrants: false})) if (ctx.bondActive(b)) ctx.addLayers(b, n, { requireActive: true });
     }
   },
 };
@@ -180,7 +181,7 @@ H.SERVER_ADD_BOND_POSITION = {
     const other = bbStr.dir === 'behind' ? behindPiece(ctx, me) : frontPiece(ctx, me);
     const targets = [me];
     if (other && other.kind === 'chess' && other.uid !== me.uid) targets.push(other);
-    for (const t of targets) for (const b of metaBonds(ctx, t)) if (ctx.bondActive(b)) ctx.addLayers(b, num(bb.count), { requireActive: true, source: t.uid });
+    for (const t of targets) for (const b of metaBonds(ctx, t, {equipmentGrants: false})) if (ctx.bondActive(b)) ctx.addLayers(b, num(bb.count), { requireActive: true, source: t.uid });
   },
 };
 

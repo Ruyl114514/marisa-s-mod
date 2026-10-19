@@ -1,6 +1,9 @@
 import {addPrepGain,settlePrepGain,RHODE_BOND} from './source/server/match/rhodeMeta.js';
+import {registerUniteMeta} from './source/server/sim/content/bonds/addon/unite-meta.js';
 
 export function installPrep(sp) {
+  // The author uses the existing bond registry. Adapt its registration name to the SDK.
+  registerUniteMeta({bond: (id, handler) => sp.meta.register(`bond:${id}`, handler)});
   const matches=new WeakMap();
   const state=ctx=>{
     let states=matches.get(ctx.gd);

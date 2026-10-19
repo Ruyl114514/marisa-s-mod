@@ -227,6 +227,7 @@ export function diyRecordOf(slot, pick, data, { potential = null } = {}) {
   rec.diyFor = slot.baseId ?? slot.chessId;
   if (proto) rec.diyProto = true;
   if (proto && typeof locked?.modKitId === 'string') rec.modKitId = locked.modKitId;
+  if (proto && Array.isArray(locked?.garrisonIds)) rec.garrisonIds = [...locked.garrisonIds];
   return rec;
 }
 

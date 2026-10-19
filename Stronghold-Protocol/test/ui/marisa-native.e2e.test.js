@@ -2,10 +2,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {Client,hasChrome,sleep,ROOT} from '../e2e/client.mjs';
-import {scriptFixture} from '../helpers/scriptFixtures.js';
 import {startServer} from '../../server/index.js';
 const enabled=process.env.SP_E2E==='1' && hasChrome();
-test('both added operators can switch between shop and DIY through the manager and start a verified sandbox battle', {skip:!enabled,timeout:300000},async t=>{
+test('new alliance and strategy settings sync with operator routes before a verified sandbox battle', {skip:!enabled,timeout:300000},async t=>{
  const previous=process.env.SP_PLUGIN_SCRIPTS;process.env.SP_PLUGIN_SCRIPTS='sandbox';
  t.after(()=>{if(previous===undefined)delete process.env.SP_PLUGIN_SCRIPTS;else process.env.SP_PLUGIN_SCRIPTS=previous;});
  const srv=await startServer({port:0,host:'127.0.0.1',quiet:true,pluginsDir:ROOT+'/plugins',assetIndex:false,matchHost:{matchOptions:{verify:'all',timerScale:0.1,combatSpeed:16,botRehearsal:0}}});
@@ -25,9 +24,18 @@ test('both added operators can switch between shop and DIY through the manager a
  assert.match(await host.page.$eval('[data-plugin="marisa"]',e=>e.textContent),/脚本（沙箱）/);
  await host.page.waitForSelector('[data-testid="marisa-settings"]');
  await host.page.evaluate(()=>{for(const e of document.querySelectorAll('.mod-manager__group'))e.open=true;});
+ const sees='[data-testid="marisa-settings"] label[title="bond_x_marisa_seesShip"] input';
+ const uniteBand='[data-testid="marisa-settings"] label[title="band_x_marisa_unite"] input';
+ await host.page.click(sees);await host.page.click(uniteBand);
+ await host.click('[data-testid="marisa-settings"] button','应用设置');
+ for(const client of [host,guest])await client.page.waitForFunction(()=>{
+  const settings=globalThis.__SP__.store.get().room.content.plugins.find(plugin=>plugin.id==='marisa')?.settings;
+  return settings?.sees===false&&settings?.uniteBand===false;
+ });
+ await host.page.click(sees);await host.page.click(uniteBand);
  const route='[data-testid="marisa-settings"] .mod-manager__list--operators select';
  for(const [makoto,amiya]of [['diy','shop'],['shop','diy'],['diy','diy']]){
-  const selects=await host.page.$$(route);assert.equal(selects.length,2);
+  const selects=await host.page.$$(route);assert.equal(selects.length,6);
   await selects[0].select(makoto);await selects[1].select(amiya);
   await host.page.waitForFunction(()=>!document.querySelector('[data-testid="marisa-settings"] button[type="submit"]').disabled);
   await host.page.$eval('[data-testid="marisa-settings"] button[type="submit"]',e=>e.scrollIntoView({block:'center'}));

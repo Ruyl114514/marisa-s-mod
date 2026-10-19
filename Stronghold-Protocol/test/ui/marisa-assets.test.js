@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { bandIconUrl } from '../../public/js/ui/assetUrls.js';
+import { bandIconUrl, bondIconUrl, itemIconUrl } from '../../public/js/ui/assetUrls.js';
 import { availableSkins, chosenSkin } from '../../public/js/ui/skins.js';
 import { data } from '../../public/js/data.js';
 
@@ -24,6 +24,11 @@ test('namespaced Kun strategy resolves the original icon through the UI asset re
   const assets = JSON.parse(fs.readFileSync(new URL('../../data/assets.json', import.meta.url), 'utf8'));
   assert.equal(bandIconUrl(assets, 'band_x_marisa_kun'), '/assets/band/band_kun.png');
   assert.equal(bandIconUrl(assets, 'band_x_marisa_kun'), bandIconUrl(assets, 'band_kun'));
+  assert.equal(bandIconUrl(assets, 'band_x_marisa_unite'), '/assets/band/band_unite.png');
+  assert.equal(bondIconUrl(assets, 'bond_x_marisa_seesShip'), '/icons/bond-sees.svg');
+  assert.equal(itemIconUrl(assets, 'trap_modsees01'), '/icons/item-persona.svg');
+  assert.deepEqual(assets.audio.sfx.units.char_x_marisa_aigis, assets.audio.sfx.units.char_4218_aigis);
+  assert.deepEqual(assets.audio.voice.char_x_marisa_aigis, assets.audio.voice.char_4218_aigis);
 });
 
 test('legacy Marisa skins are published in the 0.3.1 per-operator catalogue including the namespaced Makoto', () => {

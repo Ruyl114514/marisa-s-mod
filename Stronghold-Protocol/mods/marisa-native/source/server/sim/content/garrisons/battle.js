@@ -47,6 +47,7 @@
 import * as S from '../support/index.js';
 import { mitigate } from '../../damage.js';
 import { frontOf } from '../../dir.js';
+import { bodyInKeys, bodyKeys } from '../../body.js';
 
 const ids = (s) => String(s ?? '').split(',').map((x) => x.trim()).filter(Boolean);
 const EMPTY = Object.freeze([]);
@@ -60,6 +61,15 @@ function garrisonIdsOf(u) {
 
 // ---------------------------------------------------------------------------------------------------------------------
 // install
+
+/** battle → Map(effectKeyOrRuneKey → instances), installed by `install()`; read by `garrisonBonus`. */
+const BONUS = new WeakMap();
+
+/**
+ * 结城理「总攻击 +20%」那条驻防的 effectKey —— addon/sees.js 通过它把数值读回去。
+ * 与 `tools/mod-content.mjs` 的 `MOD_GARRISONS.garrison_makoto_sees_a.effectKey` 必须一致。
+ */
+export const ALLOUT_BONUS_KEY = 'act1autochess_gar_eff_alloutBonus';
 
 export function install(battle) {
   const all = [];
@@ -119,6 +129,35 @@ export function install(battle) {
       for (const it of grants) S.fxOn(battle, 'garrisonGrant', it.unit, `gar:${it.grantedBy.gid}`, it.gid, { from: it.grantedBy.unit.id });
     });
   }
+  // 由 addon 侧读回的「驻防加成」表（见 garrisonBonus）
+  BONUS.set(battle, by);
+}
+
+/**
+ * 读回某位玩家的某条**非叠层**驻防加成（当前只有结城理的「总攻击 +20%」用它）。
+ *
+ * 为什么需要这个出口：那条效果的文字与数值按用户裁决写在**干员驻防**里（`bb.allout_bonus`），
+ * 但「总攻击」本身实现在盟约 addon（`addon/sees.js`）—— 两边不能各实现一次同一件事。
+ * 所以驻防只维护「持有者在场」这个事实（`it.active`，见 `act1autochess_gar_eff_alloutBonus`），
+ * addon 通过这里把数值读回去乘算。
+ *
+ * 同一 key 有多条实例时**求和**（每个持有者一条；两位结城理不可能同时在场，求和是安全的默认）。
+ * @param {object} battle
+ * @param {string} pid
+ * @param {string} key `bbStr.key`（battle rune）或 `effectKey`
+ * @param {string} bbKey 读哪一个 bb 键（如 `allout_bonus`）
+ * @returns {number} 0 when nobody carries it / the carrier is off field
+ */
+export function garrisonBonus(battle, pid, key, bbKey) {
+  const by = BONUS.get(battle);
+  if (!by) return 0;
+  let sum = 0;
+  for (const it of by.get(key) ?? []) {
+    if (!it.active) continue;
+    if (it.unit.ownerId !== pid) continue;
+    sum += S.num(it.bb[bbKey], 0);
+  }
+  return sum;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -207,6 +246,25 @@ function capOf(battle, it) {
   return Math.max(min, S.bondMembers(battle, it.unit.ownerId, bondId, { fieldOnly: true }).length);
 }
 
+/**
+ * 盟约级的每回合叠层上限（`bb.bond_layer_per_round_max` + `bbStr.bond_layer_cap_key`）。
+ *
+ * 为什么需要它：用户 2026-10-16 裁决「我们联合每回合最多叠加10层」——那是**盟约级**的配额，
+ * **所有来源合计**（技能 / 击杀 / 学生互助会），不是某一位或某一个来源的。而这几位成员的叠层
+ * 现在由各自的驻防触发（见 docs/SEES-GARRISON-MOVE.md），所以驻防必须能把配额交给 `gainLayers` 的
+ * `cap` / `capKey`（引擎自带的「每场战斗至多 N 层」机制，support/index.js:332-357），
+ * 且**同一个 key 在整场战斗内共用**——这样古米用完 10 层后凛冬的技能也叠不动。
+ *
+ * 没声明这两个键时返回 null：那时驻防只受自己的 `max_add_count_per_battle` / `cap_min` 约束，
+ * 与改动前一致（结城理 / 予愿安洁莉娜 / 阿米娅(医疗) 那几条就是这样）。
+ */
+function bondCapOf(it) {
+  const cap = S.num(it.bb.bond_layer_per_round_max, 0);
+  const key = it.bbStr.bond_layer_cap_key;
+  if (!(cap > 0) || typeof key !== 'string' || !key) return null;
+  return { cap, key };
+}
+
 /** Fire a layer-gain garrison instance. Returns the layers added. */
 export function fireGain(battle, it) {
   if (!conditionMet(battle, it)) return 0;
@@ -221,9 +279,12 @@ export function fireGain(battle, it) {
     n = Math.min(Math.floor(n), Math.max(0, Math.floor(it.cap) - (it.wholeUsed ?? 0)));
     if (!(n > 0)) return 0;
   }
+  // 盟约级配额（用户裁决）：与 unite.js 的 grant 共用同一个 capKey，所以两边互相计入。
+  const shared = whole ? null : bondCapOf(it);
   const added = S.gainLayers(battle, {
     playerId: it.unit.ownerId, bonds, n, requireActive: true, source: it.unit, reason: 'garrison',
-    cap: whole ? Infinity : capOf(battle, it), capKey: whole ? null : it.capKey,
+    cap: whole ? Infinity : (shared ? shared.cap : capOf(battle, it)),
+    capKey: whole ? null : (shared ? shared.key : it.capKey),
   });
   if (whole && added > 0) it.wholeUsed = (it.wholeUsed ?? 0) + n;
   if (added > 0) S.fxOn(battle, 'garrison', it.unit, `gar:${it.gid}`, it.key, { n: added });
@@ -397,6 +458,61 @@ const INSTALLERS = {
   },
 
   /**
+   * 岳羽由加莉 "自身及前方一名干员的攻击范围内，敌人被停顿、束缚或击晕时，有 50% 概率使【SEES】层数+1；
+   * 每回合最多由此获得 10 层"（用户原话，逐字见 docs/TASKS-SEES.md §0）。
+   *
+   * 触发用引擎**现成的** `statusApplied` 事件（`server/sim/battle/status.js:231`），`entered` 才表示「目标此前
+   * 没有该状态」—— 只认它，否则「延长已有状态」会重复计层。控制状态键：停顿 `sluggish` / 束缚 `bind` /
+   * 击晕 `stun`（与 `sees.js` 的 `CONTROL_STATUSES` 同一组）。
+   *
+   * 范围 = 持有者本人 **+ 她正前方一格上的干员**（用户原话「自身及前方一名干员」）两者的攻击范围并集；
+   * 「范围」判定照 kits 的 `inRange`：`bodyInKeys(target, unit.rangeKeySet)`。
+   * 概率 `bb.prob`、每回合上限 `bb.cap_min`（走 `fireGain` 的 cap / capKey —— 与结城理那条同样的机制）。
+   */
+  act1autochess_gar_event_statusctrl(battle, list) {
+    const CONTROL = ['sluggish', 'bind', 'stun'];
+    const inRange = (u, e) => !!u && !!u.rangeKeySet && bodyInKeys(e, u.rangeKeySet);
+    const watchersOf = (it) => {
+      const out = [it.unit];
+      // 正前方一格上的干员（同一位玩家、在场）
+      const [fr, fc] = frontOf(it.unit.tileR, it.unit.tileC, it.unit.dir);
+      for (const a of battle.allyUnits) {
+        if (!a || a === it.unit || a.side !== 'ally' || !a.alive || !a.deployed) continue;
+        if (a.ownerId !== it.unit.ownerId) continue;
+        for (const k of bodyKeys(a)) if (Math.floor(k / 21) === fr && k % 21 === fc) return [...out, a];
+      }
+      return out;
+    };
+    battle.on('statusApplied', (c) => {
+      const t = c.target;
+      if (!t || t.side !== 'enemy' || !t.alive) return;
+      if (!CONTROL.includes(c.status)) return;
+      if (c.entered === false) return;   // 延长已有状态不算「被施加」
+      for (const it of list) {
+        if (!S.onField(it.unit)) continue;
+        if (!watchersOf(it).some((w) => inRange(w, t))) continue;
+        if (!(battle.rng() < S.num(it.bb.prob, 0.5))) continue;
+        it.cnt++;
+        fireGain(battle, it);
+      }
+    });
+  },
+
+  /**
+   * 结城理 "自身在场时，'总攻击'造成的攻击力提升 20%"（用户原话）。
+   *
+   * 这不是叠层，而是 `addon/sees.js` 里「总攻击」的**乘区**。所以这条驻防不调 `fireGain`：它在 install 时把
+   * 「持有者在场」这一事实登记成 `it.active`（`tick` 上维护，与 `MOD_TRIGGER_ally_liftoff` 同一套轮询写法），
+   * 由 `sees.js` 通过 `garrisonBonus(battle, pid, '…alloutBonus')` 读回。
+   * 这样「加成写在干员驻防里」与「总攻击实现在盟约 addon 里」不重复实现同一件事。
+   */
+  act1autochess_gar_eff_alloutBonus(battle, list) {
+    const refresh = () => { for (const it of list) it.active = !!(it.unit.alive && it.unit.deployed); };
+    refresh();
+    battle.on('tick', refresh);
+  },
+
+  /**
    * 予愿安洁莉娜 "每次释放可施加浮空的技能时，使已激活的【远见】层数+1": the cast itself is the trigger (skillStart),
    * the condition is that the cast skill can apply 浮空. A kit declares that with the skill flag `levitate` on the spec
    * (tier3 予愿安洁莉娜 S2 重力自定义) — the same spec-flag route as 起飞. The keys are marked so that a skill spec of
@@ -467,7 +583,15 @@ export function stepsOf(battle, it) {
 function attrMods(bb, k) {
   // "每叠加N层，本干员攻击力+X%": a 直接乘算 bonus like every other "+X%" of the 卫戍 systems (support directMods)
   const m = S.directMods({ atk: S.num(bb.atk, 0) * k, hp: S.num(bb.max_hp, 0) * k, def: S.num(bb.def, 0) * k });
-  if (S.num(bb.attack_speed, 0)) m.aspd = S.num(bb.attack_speed) * k;
+  if (S.num(bb.attack_speed, 0)) {
+    // 「每有N层…攻击速度+X%（最多+Y%）」（MOD 埃癸斯 garrison_aigis_aspd_a）：`attack_speed` 是每档的百分点
+    // （+1% = 1，与 `mods.aspd` 同单位），`max_attack_speed` 是**百分点上限**（+200% = 200），
+    // 未声明上限时保持既有行为（不夹取）。
+    let v = S.num(bb.attack_speed) * k;
+    const cap = S.num(bb.max_attack_speed, 0);
+    if (cap > 0) v = Math.min(cap, v);
+    m.aspd = v;
+  }
   if (S.num(bb.hp_recovery_per_sec, 0)) m.hpRegen = S.num(bb.hp_recovery_per_sec) * k;
   if (S.num(bb.sp_recovery_per_sec, 0)) m.spRecoveryFlat = S.num(bb.sp_recovery_per_sec) * k;
   return m;

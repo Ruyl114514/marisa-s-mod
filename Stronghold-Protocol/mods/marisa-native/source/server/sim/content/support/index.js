@@ -1,3 +1,4 @@
+import {grantedBondsByMorph, selfGrantedBonds} from '../../../../shared/plugins/rules.js';
 // server/sim/content/support/index.js — shared helpers of content wave B (bonds, garrisons, items, bands, choices).
 //
 // Battle side and prep side read the same frozen game data (server/data.js). Everything here is pure and deterministic;
@@ -201,17 +202,16 @@ export function unitBonds(u) {
   if (!isOp(u)) return EMPTY;
   const cached = BONDS.get(u);
   const items = itemsOf(u);
-  const key = items.join('|');
+  const plus = u.player?.morphPairing === 'plus';
+  // The official key stays items.join('|'), so a cached official result is unchanged.
+  const key = (plus ? 'plus|' : '') + items.join('|');
   if (cached && cached.key === key) return cached.bonds;
   const out = [...(Array.isArray(u.def?.bonds) ? u.def.bonds : Array.isArray(u.def?.raw?.bonds) ? u.def.raw.bonds : [])];
-  if (items.length >= 2) {
-    const recs = items.map((id) => itemRecord(id)).filter(Boolean);
-    if (recs.some((r) => r.canGiveBond)) {
-      for (const r of recs) {
-        if (r.canGiveBond) continue;
-        if (typeof r.giveBondId === 'string' && bondRecord(r.giveBondId) && !out.includes(r.giveBondId)) out.push(r.giveBondId);
-      }
-    }
+  for (const bondId of selfGrantedBonds(items, itemRecord, id => !!bondRecord(id))) {
+    if (!out.includes(bondId)) out.push(bondId);
+  }
+  for (const b of grantedBondsByMorph(items, (id) => itemRecord(id), { mode: plus ? 'plus' : 'official', bondOk: (id) => !!bondRecord(id) })) {
+    if (!out.includes(b)) out.push(b);
   }
   const bonds = Object.freeze(out);
   BONDS.set(u, { key, bonds });

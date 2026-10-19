@@ -2976,6 +2976,95 @@ var SKILL_SUMMON_PER_CAST = Object.freeze({ [TOKEN_IDS.rosmonGear]: 2, [TOKEN_ID
 var SKILL_SUMMON_UNCAPPED = /* @__PURE__ */ new Set([TOKEN_IDS.goldenOath]);
 var TACTICIAN_TOKENS = /* @__PURE__ */ new Set([TOKEN_IDS.wolfPack, TOKEN_IDS.manifold]);
 
+// mods/marisa-native/source/shared/plugins/dataUtils.js
+var RECORD_MAPS = Object.freeze({
+  chess: ["chess_x", "chessId"],
+  enemies: ["enemy_x", "key"],
+  items: ["item_x", "id"],
+  bonds: ["bond_x", "bondId"],
+  bands: ["band_x", "bandId"],
+  garrisons: ["garrison_x", "garrisonId"],
+  effects: ["effect_x", "effectId"],
+  waves: ["wave_x", "id"],
+  stages: ["stage_x", "id"],
+  tokens: ["token_x", "tokenId"]
+});
+
+// mods/marisa-native/source/shared/plugins/rules.js
+var RULE_SWITCHES = Object.freeze({
+  shopBias: Object.freeze({
+    options: Object.freeze(["official", "bondBias"]),
+    phrase: Object.freeze({ bondBias: N_("\u5546\u5E97\u88C5\u5907\u504F\u5411\u5DF2\u6FC0\u6D3B\u76DF\u7EA6") })
+  }),
+  prepLoadout: Object.freeze({
+    options: Object.freeze(["locked", "prep"]),
+    phrase: Object.freeze({ prep: N_("\u4F11\u6574\u671F\u53EF\u8C03\u6574\u6280\u80FD\u4E0E\u6A21\u7EC4") })
+  }),
+  morphPairing: Object.freeze({
+    options: Object.freeze(["official", "plus"]),
+    phrase: Object.freeze({ plus: N_("\u53D8\u5F62\u540C\u6784\u4F53\u4E0D\u5360\u683C\uFF0C\u4EC5\u914D\u5BF9\u6700\u5DE6\u76DF\u7EA6\u88C5\u5907") })
+  }),
+  unequip: Object.freeze({
+    options: Object.freeze(["official", "allow"]),
+    phrase: Object.freeze({ allow: N_("\u53EF\u4EE5\u5378\u4E0B\u88C5\u5907") })
+  })
+});
+var RULE_NAMES = Object.freeze(
+  /** @type {readonly RuleName[]} */
+  Object.keys(RULE_SWITCHES)
+);
+var GAMEPLAY_RULE_CLASSES = Object.freeze(["content", "script", "trusted"]);
+function grantedBondsByMorph(items, getItem, { mode = "official", bondOk = () => true } = {}) {
+  const list = Array.isArray(items) ? items : [];
+  if (mode !== "plus" && list.length < 2) return [];
+  const recs = [];
+  for (const it of list) {
+    const id = typeof it === "string" ? it : it && it.id;
+    if (typeof id !== "string") continue;
+    const rec = getItem(id);
+    if (rec && typeof rec === "object") recs.push(rec);
+  }
+  if (!recs.some((r) => r.canGiveBond)) return [];
+  const out = [];
+  for (const r of recs) {
+    if (r.canGiveBond) continue;
+    const id = r.giveBondId;
+    if (typeof id === "string" && id && bondOk(id) && !out.includes(id)) {
+      out.push(id);
+      if (mode === "plus") break;
+    }
+  }
+  return out;
+}
+function selfGrantedBonds(items, getItem, bondOk = () => true) {
+  const bonds = /* @__PURE__ */ new Set();
+  for (const item of Array.isArray(items) ? items : []) {
+    const itemId = typeof item === "string" ? item : item?.id;
+    const bondId = typeof itemId === "string" ? getItem(itemId)?.selfGrantBondId : null;
+    if (typeof bondId === "string" && bondId && bondOk(bondId)) bonds.add(bondId);
+  }
+  return [...bonds];
+}
+var OFFICIAL_SLOT_POLICY = Object.freeze({
+  slotsUsed(items) {
+    return Array.isArray(items) ? items.length : 0;
+  },
+  slotCap(equipPerChess) {
+    return equipPerChess;
+  },
+  occupies() {
+    return true;
+  },
+  accepts() {
+    return true;
+  },
+  replacedIndex(items, replaceUid) {
+    if (!Array.isArray(items) || replaceUid == null) return 0;
+    const i = items.findIndex((x) => x && x.uid === replaceUid);
+    return i >= 0 ? i : 0;
+  }
+});
+
 // mods/marisa-native/source/server/data.js
 var getData = () => ({});
 
@@ -3092,17 +3181,15 @@ function unitBonds(u) {
   if (!isOp(u)) return EMPTY;
   const cached2 = BONDS.get(u);
   const items = itemsOf(u);
-  const key = items.join("|");
+  const plus = u.player?.morphPairing === "plus";
+  const key = (plus ? "plus|" : "") + items.join("|");
   if (cached2 && cached2.key === key) return cached2.bonds;
   const out = [...Array.isArray(u.def?.bonds) ? u.def.bonds : Array.isArray(u.def?.raw?.bonds) ? u.def.raw.bonds : []];
-  if (items.length >= 2) {
-    const recs = items.map((id) => itemRecord(id)).filter(Boolean);
-    if (recs.some((r) => r.canGiveBond)) {
-      for (const r of recs) {
-        if (r.canGiveBond) continue;
-        if (typeof r.giveBondId === "string" && bondRecord(r.giveBondId) && !out.includes(r.giveBondId)) out.push(r.giveBondId);
-      }
-    }
+  for (const bondId of selfGrantedBonds(items, itemRecord, (id) => !!bondRecord(id))) {
+    if (!out.includes(bondId)) out.push(bondId);
+  }
+  for (const b of grantedBondsByMorph(items, (id) => itemRecord(id), { mode: plus ? "plus" : "official", bondOk: (id) => !!bondRecord(id) })) {
+    if (!out.includes(b)) out.push(b);
   }
   const bonds = Object.freeze(out);
   BONDS.set(u, { key, bonds });
@@ -3776,8 +3863,8 @@ var op_amiya3_default = {
     const d = defOf(chess, def);
     const t0 = talentBb2(d, 0);
     const sel = selectedId(chess, d);
-    const S13 = "skchr_amiya3_1", S23 = "skchr_amiya3_2";
-    const isS2 = sel === S23;
+    const S16 = "skchr_amiya3_1", S26 = "skchr_amiya3_2";
+    const isS2 = sel === S26;
     const maxHp = num6(t0.max_hp);
     const regen = num6(t0.hp_recovery_per_sec_by_max_hp_ratio);
     const SURROUND12 = Object.freeze([
@@ -3851,9 +3938,9 @@ var op_amiya3_default = {
         battle.removeBuff(unit, "talent:amiya3_s2_atk");
       }
     });
-    const selS1 = skillData(chess, d, bb, S13);
-    const build = { [S13]: (s) => s1(s), [S23]: (s) => s2(s) };
-    const selNow = selectedId(chess, d) ?? S13;
+    const selS1 = skillData(chess, d, bb, S16);
+    const build = { [S16]: (s) => s1(s), [S26]: (s) => s2(s) };
+    const selNow = selectedId(chess, d) ?? S16;
     return {
       skill: build[selNow] ? build[selNow](skillData(chess, d, bb, selNow)) : null,
       skills: altSkills(chess, d, bb, build),
@@ -3875,7 +3962,7 @@ var op_amiya3_default = {
         } }
       ],
       install(battle, unit) {
-        if (sel === S13) battle.on("damaged", extraHeal(battle, unit, num6(selS1.bb.heal_scale, 0)), { owner: unit, priority: 10 });
+        if (sel === S16) battle.on("damaged", extraHeal(battle, unit, num6(selS1.bb.heal_scale, 0)), { owner: unit, priority: 10 });
         if (!isS2 || !unit.skill) return;
         const rawActivate = unit.skill.activate.bind(unit.skill);
         unit.skill.activate = (reason = "manual", opts) => {
@@ -3896,8 +3983,35 @@ function talentAt(chess, i) {
   return list[i] ?? null;
 }
 var talentBb3 = (chess, i = 0) => talentAt(chess, i)?.bb ?? {};
+var traitBb2 = (chess) => chess?.trait?.bb ?? {};
 var up = (u) => !!u && u.alive && u.deployed;
+var skillBusy = (u) => !!(u.skill && u.skill.active && u.skill.isTimed);
+function giveSp(u, n, reason = "talent") {
+  if (!u || !u.skill || u.skill.noSkill || skillBusy(u) || !(n > 0)) return 0;
+  return u.skill.gainSp(n, reason);
+}
+function onHitOn(battle, unit, fn, priority = 0) {
+  return battle.on("hit", (ctx) => {
+    if (ctx.target === unit) fn(ctx);
+  }, { owner: unit, priority });
+}
+var PROTECT = "protect";
+var protectMods = (v) => ({ physTakenMul: 1 - v, artsTakenMul: 1 - v });
 var PROTECT_TICK_HOLD = 1.5 * TICK;
+function holdProtect(battle, target, value, duration, source = null) {
+  if (value > 0) battle.applyStrongest(target, PROTECT, { duration, value, mods: protectMods, source });
+}
+function enemiesInGrid(battle, unit, grid, { n = 0, priority = null, canHitFly = true, groundOnly = false } = {}) {
+  const keys = grid ? absoluteRangeKeys(grid, unit.tileR, unit.tileC, unit.dir, 0) : unit.rangeKeys;
+  const list = battle.enemiesInKeys(keys, unit, { canHitFly, groundOnly });
+  sortEnemyTargets(battle, unit, list, priority ?? unit.profile?.priority ?? null);
+  return n > 0 && list.length > n ? list.slice(0, n) : list;
+}
+function statBuff(battle, unit, key, mods) {
+  const m = {};
+  for (const [k, v] of Object.entries(mods)) if (Number.isFinite(v) && v !== 0 && !(k.endsWith("Mul") && v === 1)) m[k] = v;
+  if (Object.keys(m).length) battle.addBuff(unit, { key, mods: m, persist: true, allowDead: true, tags: ["talent"] });
+}
 function toggleBuff(battle, unit, key, cond, mods, extra = {}) {
   const check = () => {
     const want = up(unit) && !!cond();
@@ -3933,6 +4047,611 @@ function batMod(v, chess = null, desc = "") {
   const bat = num7(chess?.stats?.bat, 1) || 1;
   return Math.max(-0.9, x / bat);
 }
+
+// mods/marisa-native/source/server/sim/content/kits/ops/op-headbr.js
+var S1 = "skcom_charge_cost[3]";
+var S2 = "skchr_headbr_2";
+var bbOf = (chess, id) => skillRec(chess, id)?.bb ?? {};
+var batRatio = (interval, chess) => {
+  const bat = num7(chess?.stats?.bat, 0);
+  if (!(bat > 0) || !(interval > 0)) return 0;
+  return Math.max(-0.9, interval / bat - 1);
+};
+var op_headbr_default = {
+  char_x_marisa_headbr: (bb, chess) => {
+    const b1 = bbOf(chess, S1);
+    const b2 = bbOf(chess, S2);
+    const mods = {};
+    if (num7(b2.atk)) mods.atkPct = num7(b2.atk);
+    if (num7(b2.def)) mods.defPct = num7(b2.def);
+    const bat = batRatio(num7(b2.interval), chess);
+    if (bat) mods.batPct = bat;
+    return {
+      skills: {
+        [S1]: {
+          kind: "instant",
+          trigger: "SP_FULL",
+          onStart({ battle, unit }) {
+            const n = num7(b1.cost);
+            if (!(n > 0)) return;
+            battle.addDp(unit.ownerId, n);
+            battle.fx("dp", { x: unit.x, y: unit.y, n, id: unit.id });
+          }
+        },
+        [S2]: {
+          kind: "duration",
+          mods,
+          onStart({ battle, unit }) {
+            const dp = num7(b2.cost);
+            if (!(dp > 0)) return;
+            battle.addDp(unit.ownerId, dp);
+            battle.fx("dp", { x: unit.x, y: unit.y, n: dp, id: unit.id });
+          }
+        }
+      }
+    };
+  }
+};
+
+// mods/marisa-native/source/server/sim/content/kits/ops/op-headb2.js
+var S12 = "skchr_headb2_1";
+var S22 = "skchr_headb2_2";
+var S3 = "skchr_headb2_3";
+var HIGHLAND_PICK_RADIUS = 1;
+var X5 = Object.freeze([[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]);
+var HIGHLAND_DELAY = 0.1;
+var S3_SPREAD_STEP = 0.125;
+var FPS = 30;
+var SKILL3_FRAMES = 277;
+var HAMMER_FRAMES = Object.freeze([33, 84, 133, 182, 233]);
+var HAMMER_REACH = 1;
+var HAMMER_SPLASH = 1.5;
+var STUDENTS = /* @__PURE__ */ new Set([
+  "char_196_sunbr",
+  "char_x_marisa_headbr",
+  "char_194_leto",
+  "char_405_absin",
+  "char_195_glassb",
+  "char_197_poca",
+  "char_1051_headb2"
+]);
+var TIDE_IV = 0.25;
+var TIDE_KEY = "talent:headb2:tide";
+var S2_KEY = "skill:headb2:s2";
+var STEP_KEY = "skill:headb2:step";
+var HAMMER_TAG = "headb2Hammer";
+var HIGHLAND_TAG = "headb2Highland";
+var GROUND = Object.freeze({ canHitFly: false });
+var bbOf2 = (chess, id) => skillRec(chess, id)?.bb ?? {};
+var tagged = (d, tag) => !!d && Array.isArray(d.tags) && d.tags.includes(tag);
+var isOp2 = (a) => !!a && a.kind === "op";
+function highlandsAround(battle, x, y, r = HIGHLAND_PICK_RADIUS) {
+  const g = battle.grid, out = [];
+  for (let row = Math.floor(y - r); row <= Math.ceil(y + r); row++) {
+    for (let col = Math.floor(x - r); col <= Math.ceil(x + r); col++) {
+      if (!g.inRect(row, col) || g.tile(row, col).height !== "HIGH") continue;
+      const dx = Math.max(Math.abs(x - col) - 0.5, 0), dy = Math.max(Math.abs(y - row) - 0.5, 0);
+      if (dx * dx + dy * dy <= r * r + 1e-9) out.push(row * COLS + col);
+    }
+  }
+  return out;
+}
+function highlandNeighbours(battle, k) {
+  const r = Math.floor(k / COLS), c = k % COLS, g = battle.grid, out = [];
+  for (const [dr, dc] of X5) {
+    if (!dr && !dc) continue;
+    const rr = r + dr, cc = c + dc;
+    if (g.inRect(rr, cc) && g.tile(rr, cc).height === "HIGH") out.push(rr * COLS + cc);
+  }
+  return out;
+}
+var op_headb2_default = {
+  char_1051_headb2: (bb, chess) => {
+    const t0 = talentBb3(chess, 0), t1 = talentBb3(chess, 1);
+    const tb = traitBb2(chess);
+    const b1 = bbOf2(chess, S12), b2 = bbOf2(chess, S22), b3 = bbOf2(chess, S3);
+    const s2 = skillRec(chess, S22);
+    const splashMul = num7(t0.damage_scale, 1);
+    const hxScale = num7(tb.atk_scale_e, 1), hxCnt = num7(tb.cnt, Infinity);
+    const hamx = (n) => hxScale !== 1 && n >= hxCnt ? hxScale : 1;
+    const traitShare = num7(tb["attack@atk_scale_2"], 0.5);
+    const highlandStrike = (battle, unit, k, atk, s3) => {
+      const r = Math.floor(k / COLS), c = k % COLS;
+      const keys = [];
+      for (const [dr, dc] of X5) if (battle.grid.inRect(r + dr, c + dc)) keys.push((r + dr) * COLS + c + dc);
+      const foes = battle.enemiesOnTiles(keys, unit, GROUND);
+      battle.fx("aoe", { x: c, y: r, radius: 1, id: unit.id, skill: "headb2:highland" });
+      if (!foes.length) return;
+      const amount = atk * num7(t0["attack@splash_atk_scale"]) * (s3 ? num7(b3.splash_atk_scale_bonus, 1) : 1) * hamx(foes.length);
+      for (const e of foes) {
+        if (!e.alive) continue;
+        battle.dealDamage(unit, e, { amount, type: "phys", isSplash: true, canDodge: false, sourceless: true, isProjectile: true, tags: [HIGHLAND_TAG] });
+        if (!e.alive) continue;
+        if (s3) battle.applyStatus(e, "bind", { duration: num7(b3.unmovable, 1), source: unit });
+        else if (num7(t0["attack@sluggish"]) > 0) battle.applyStatus(e, "sluggish", { duration: num7(t0["attack@sluggish"]), source: unit });
+      }
+    };
+    const highlandRound = (battle, unit, x, y, depth = 0) => {
+      const tiles = highlandsAround(battle, x, y);
+      if (!tiles.length) return;
+      const seq = unit.deploySeq, atk = unit.s.atk;
+      const s3 = !!(unit.skill?.active && unit.skill.id === S3);
+      const sp = unit.skill?.id === S22 ? num7(b2.sp_per_highland) : 0;
+      const seen = new Set(tiles);
+      const trigger = (k, step) => {
+        if (sp > 0) giveSp(unit, sp);
+        battle.after(step > 0 && s3 ? S3_SPREAD_STEP : HIGHLAND_DELAY, () => {
+          if (!(unit.alive && unit.deployed && unit.deploySeq === seq)) return;
+          highlandStrike(battle, unit, k, atk, s3);
+          if (step >= depth) return;
+          for (const nb of highlandNeighbours(battle, k)) if (!seen.has(nb)) {
+            seen.add(nb);
+            trigger(nb, step + 1);
+          }
+        }, { owner: unit });
+      };
+      for (const k of tiles) trigger(k, 0);
+    };
+    const hammer = (battle, unit, k) => {
+      const [fr, fc] = unit.fwd;
+      const cx = unit.x + fc * HAMMER_REACH, cy = unit.y + fr * HAMMER_REACH;
+      const tr = unit.tileR + fr, tc = unit.tileC + fc;
+      let main = null;
+      if (battle.grid.inRect(tr, tc)) {
+        const cands = battle.enemiesInKeys([tr * COLS + tc], unit, unit.profile);
+        sortEnemyTargets(battle, unit, cands, unit.profile?.priority ?? null);
+        main = cands[0] ?? null;
+      }
+      const around = battle.foesInRadius(cx, cy, HAMMER_SPLASH, true).filter((e) => e !== main && !e.isFlying);
+      const atk = unit.s.atk, scale = num7(b3.atk_scale, 1) * hamx((main ? 1 : 0) + around.length);
+      battle.fx("aoe", { x: cx, y: cy, radius: HAMMER_SPLASH, id: unit.id, skill: "headb2:hammer" });
+      if (main && main.alive) battle.dealDamage(unit, main, { amount: atk * scale, type: "phys", isSkill: true, tags: ["skill", HAMMER_TAG] });
+      for (const e of around) {
+        if (!e.alive) continue;
+        battle.dealDamage(unit, e, { amount: atk * scale * traitShare, type: "phys", isSkill: true, isSplash: true, mul: splashMul, tags: ["skill", HAMMER_TAG] });
+      }
+      highlandRound(battle, unit, cx, cy, k - 1);
+    };
+    return {
+      skills: {
+        [S12]: { kind: "duration", mods: { atkPct: num7(b1.atk), aspd: num7(b1.attack_speed) } },
+        [S22]: {
+          kind: "toggle",
+          trigger: { rule: "SP_FULL" },
+          targeting: { rangeGrid: s2?.rangeGrid ?? null },
+          onStart({ battle, unit, skill }) {
+            const later = (unit.mem.headb2S2Casts ?? 0) >= 1;
+            unit.mem.headb2S2Casts = (unit.mem.headb2S2Casts ?? 0) + 1;
+            const atk = later ? num7(b2["headb2_s_2[second].atk"]) : num7(b2.atk);
+            const def = later ? num7(b2["headb2_s_2[second].def"]) : num7(b2.def);
+            battle.addBuff(unit, { key: S2_KEY, mods: { atkPct: atk, defPct: def }, tags: ["skill"] });
+            skill.timeLeft = later ? Infinity : Math.max(0.01, skill.duration);
+          },
+          onTick({ skill, dt }) {
+            if (!Number.isFinite(skill.timeLeft)) return;
+            skill.timeLeft -= dt;
+            if (skill.timeLeft <= 1e-9) skill.end("duration");
+          },
+          onEnd({ battle, unit }) {
+            battle.removeBuff(unit, S2_KEY);
+          }
+        },
+        [S3]: {
+          kind: "duration",
+          duration: SKILL3_FRAMES / FPS,
+          mods: { atkPct: num7(b3.atk_base) },
+          attack: { noAttack: true },
+          onStart({ battle, unit, skill }) {
+            const n0 = skill.activations, seq = unit.deploySeq, step = num7(b3.atk_step);
+            let done = 0;
+            for (const f of HAMMER_FRAMES) {
+              battle.after(f / FPS, () => {
+                if (!(unit.alive && unit.deployed && unit.deploySeq === seq && skill.active && skill.activations === n0)) return;
+                if (!unit.canAct) return;
+                hammer(battle, unit, done + 1);
+                done++;
+                if (step) battle.addBuff(unit, { key: STEP_KEY, mods: { atkPct: step * done }, tags: ["skill"] });
+              }, { owner: unit });
+            }
+          },
+          onEnd({ battle, unit }) {
+            battle.removeBuff(unit, STEP_KEY);
+          }
+        }
+      },
+      talents: [
+        { install(battle, unit) {
+          if (splashMul === 1) return;
+          battle.on("hit", (c) => {
+            const d = c.dmg;
+            if (c.source === unit && d.isAttack && d.isSplash && !tagged(d, HAMMER_TAG)) d.mul *= splashMul;
+          }, { owner: unit });
+        } },
+        { install(battle, unit) {
+          const a = num7(t1.atk), d = num7(t1.def), x = num7(t1.scale_bonus, 1);
+          if (!a && !d) return;
+          const inSkill = () => !!(unit.skill && unit.skill.active && unit.skill.kind !== "passive");
+          const give = () => {
+            if (!up(unit) || !inSkill()) return;
+            for (const o of battle.alliesFor(unit)) {
+              if (!isOp2(o)) continue;
+              const k = STUDENTS.has(o.def?.charId) ? x : 1;
+              const cur = o.findBuff(TIDE_KEY);
+              if (cur && cur.source !== unit && (cur.data?.v ?? 0) > a * k && cur.timeLeft > 0.05) continue;
+              battle.addBuff(o, { key: TIDE_KEY, duration: TIDE_IV + 0.1, mods: { atkPct: a * k, defPct: d * k }, source: unit, data: { v: a * k }, tags: ["aura"] });
+            }
+          };
+          battle.every(TIDE_IV, give, { owner: unit });
+          battle.on("skillStart", (c) => {
+            if (c.unit === unit) give();
+          }, { owner: unit });
+          battle.on("skillEnd", (c) => {
+            if (c.unit !== unit) return;
+            for (const o of battle.allyUnits) {
+              const b = o.findBuff(TIDE_KEY);
+              if (b && b.source === unit) battle.removeBuff(o, b);
+            }
+          }, { owner: unit });
+        } }
+      ],
+      // 汹涌怒火's 高台 round after each attack, centred on its target
+      trait: { afterHit: (battle, unit, target, hctx) => {
+        if (unit.alive && unit.deployed) highlandRound(battle, unit, hctx.x, hctx.y);
+      } },
+      install(battle, unit) {
+        battle.on("deploy", (c) => {
+          if (c.unit === unit) unit.mem.headb2S2Casts = 0;
+        }, { owner: unit });
+        if (hxScale === 1) return;
+        battle.on("hit", (c) => {
+          const d = c.dmg;
+          if (c.source !== unit || !d.isAttack || !d.attackId || tagged(d, HAMMER_TAG)) return;
+          const m = unit.mem;
+          if (m.headb2HamxId !== d.attackId) {
+            const t = c.target;
+            m.headb2HamxId = d.attackId;
+            m.headb2HamxMul = hamx(1 + battle.foesInRadius(t.x, t.y, unit.profile?.splashRadius || 1, true).filter((e) => e !== t && !e.isFlying).length);
+          }
+          d.amount *= m.headb2HamxMul ?? 1;
+        }, { owner: unit, priority: 5 });
+      }
+    };
+  }
+};
+
+// mods/marisa-native/source/server/sim/content/kits/ops/op-helage.js
+var S13 = "skchr_helage_1";
+var S23 = "skchr_helage_2";
+var S32 = "skchr_helage_3";
+var bbOf3 = (chess, id) => skillRec(chess, id)?.bb ?? {};
+var talentAt2 = (chess, i) => (chess?.talents ?? []).find((t) => t && t.index === i)?.bb ?? {};
+var op_helage_default = {
+  char_188_helage: (bb, chess) => {
+    const t0 = talentAt2(chess, 0), t1 = talentAt2(chess, 1), t2 = talentAt2(chess, 2);
+    const tb = traitBb2(chess);
+    const b1 = bbOf3(chess, S13), b2 = bbOf3(chess, S23), b3 = bbOf3(chess, S32);
+    return {
+      skills: {
+        [S13]: {
+          kind: num7(skillRec(chess, S13)?.maxChargeTime, 1) > 1 ? "charges" : "instant",
+          attack: { atkScale: num7(b1.atk_scale, 1), hits: 2 }
+        },
+        [S23]: {
+          kind: "duration",
+          mods: { atkPct: num7(b2.atk), dodgePhys: num7(b2.prob) },
+          attack: { hits: 2 }
+        },
+        [S32]: {
+          kind: "duration",
+          mods: { atkPct: num7(b3.atk) },
+          targeting: { rangeExtend: num7(b3.ability_range_forward_extend), maxTargets: Math.max(1, Math.floor(num7(b3["attack@max_target"], 1))) }
+        }
+      },
+      talents: [
+        { install(battle, unit) {
+          const maxAs = num7(t0.min_attack_speed), minHp = num7(t0.min_hp_ratio);
+          if (!(maxAs > 0) || !(minHp < 1)) return;
+          const key = "talent:helage:berserk";
+          battle.on("tick", () => {
+            const cur = unit.findBuff(key);
+            if (!up(unit)) {
+              if (cur) battle.removeBuff(unit, key);
+              return;
+            }
+            const v = maxAs * Math.max(0, Math.min(1, (1 - unit.hpRatio) / (1 - minHp)));
+            if (cur && Math.abs((cur.data?.v ?? 0) - v) < 0.05) return;
+            if (v < 0.05) {
+              if (cur) battle.removeBuff(unit, key);
+              return;
+            }
+            battle.addBuff(unit, { key, mods: { aspd: v }, data: { v }, tags: ["talent"] });
+          }, { owner: unit });
+        } },
+        { install(battle, unit) {
+          const regen = num7(t1.hp_recovery_per_sec);
+          if (regen > 0) toggleBuff(battle, unit, "talent:helage:regen", () => unit.blocking.length === 0, { hpRegen: regen });
+          const lowHp = num7(t2.hp_ratio), lowRegen = num7(t2.hp_recovery_per_sec);
+          if (lowRegen > 0 && lowHp > 0) {
+            toggleBuff(battle, unit, "talent:helage:regenLow", () => unit.blocking.length > 0 && unit.hpRatio < lowHp, { hpRegen: lowRegen });
+          }
+        } }
+      ],
+      install(battle, unit) {
+        const dr = num7(t0.damage_resistance), drBelow = num7(t0.hp_ratio);
+        if (dr > 0 && drBelow > 0) {
+          const keep = () => {
+            if (up(unit) && unit.hpRatio < drBelow) holdProtect(battle, unit, dr, PROTECT_TICK_HOLD, unit);
+          };
+          battle.on("tick", keep, { owner: unit });
+          onHitOn(battle, unit, keep);
+        }
+        const rise = num7(tb.hp_ratio);
+        if (rise > 0) {
+          battle.on("fatal", (ctx) => {
+            if (ctx.unit !== unit || ctx.prevented || unit.mem.helageRoseSeq === unit.deploySeq) return;
+            unit.mem.helageRoseSeq = unit.deploySeq;
+            ctx.prevented = true;
+            unit.hp = Math.max(1, unit.s.maxHp * rise);
+            battle.fx("undying", { x: unit.x, y: unit.y, id: unit.id });
+          }, { owner: unit, priority: -50 });
+        }
+      }
+    };
+  }
+};
+
+// mods/marisa-native/source/server/sim/content/kits/ops/op-kormr.js
+var SLASH_INTERVAL = 0.25;
+var SLASH_COUNT = 6;
+var op_kormr_default = {
+  char_x_marisa_kormr: (bb, chess) => {
+    const t0 = talentBb3(chess, 0);
+    const sb = skillRec(chess, "skcom_atk_up[1]") ?? {};
+    const skill = {
+      kind: "duration",
+      duration: num7(sb.duration, 20),
+      mods: { atkPct: num7(sb.bb?.atk) }
+    };
+    return {
+      skills: { "skcom_atk_up[1]": skill },
+      talents: [
+        {
+          install(battle, unit) {
+            const scale = num7(t0.atk_scale);
+            const finalScale = num7(t0.final_atk_scale);
+            const fear = num7(t0.fear);
+            if (!(scale > 0) || !(finalScale > 0)) return;
+            const nearestEnemy = () => {
+              const ring = enemiesInGrid(battle, unit, null);
+              if (!ring.length) return null;
+              return ring.slice().sort((a, b) => Math.abs(a.tileR - unit.tileR) + Math.abs(a.tileC - unit.tileC) - (Math.abs(b.tileR - unit.tileR) + Math.abs(b.tileC - unit.tileC)) || a.uid - b.uid)[0];
+            };
+            const strike = (target) => {
+              if (!up(unit) || unit.mem.kormrStruck || !target) return;
+              unit.mem.kormrStruck = true;
+              let n = 0;
+              const slash = () => {
+                if (!up(unit) || !target.alive || target.removed) return;
+                n += 1;
+                const last = n >= SLASH_COUNT;
+                battle.dealDamage(unit, target, battle.makeDamage({
+                  amount: unit.s.atk * (last ? finalScale : scale),
+                  type: "arts",
+                  canDodge: false,
+                  // 「无视闪避」
+                  isSkill: true,
+                  tags: ["talent"]
+                }));
+                if (last) {
+                  if (fear > 0 && target.alive) battle.applyStatus(target, "fear", { duration: fear, source: unit });
+                  battle.fx("swordStorm", { x: unit.x, y: unit.y, id: unit.id });
+                  return;
+                }
+                battle.after(SLASH_INTERVAL, slash);
+              };
+              slash();
+            };
+            const arm = () => {
+              unit.mem.kormrArmed = true;
+              unit.mem.kormrStruck = false;
+            };
+            battle.on("deploy", (c) => {
+              if (c.unit === unit) arm();
+            }, { owner: unit });
+            battle.on("tick", () => {
+              if (!unit.mem.kormrArmed) return;
+              const t = nearestEnemy();
+              if (t) strike(t);
+            }, { owner: unit });
+            if (up(unit)) arm();
+          }
+        }
+      ]
+    };
+  }
+};
+
+// mods/marisa-native/source/server/sim/content/kits/ops/op-aigis.js
+var AIRBORNE = Object.freeze({ liftoff: true });
+var op_aigis_default = {
+  char_x_marisa_aigis: (bb, chess, _def) => {
+    const b1 = skillRec(chess, "skchr_aigis_1")?.bb ?? {};
+    const b2 = skillRec(chess, "skchr_aigis_2")?.bb ?? {};
+    const t1 = talentBb3(chess, 1);
+    const dmgScale = num7(t1.damage_scale, 1);
+    const dmgRes = num7(t1.damage_resistance, 0);
+    return {
+      skills: {
+        // 启动狂宴模式: timed ATK/DEF, random targeting, self-stun on end.
+        skchr_aigis_1: {
+          kind: "duration",
+          duration: num7(chess?.skills?.find((s) => s.skillId === "skchr_aigis_1")?.duration, 20),
+          mods: { atkPct: num7(b1.atk), defPct: num7(b1.def) },
+          flags: { liftoff: false },
+          // 技能开启时降落
+          targeting: { random: true },
+          // 「随机攻击范围内的目标」
+          onEnd({ battle, unit }) {
+            const stun = num7(b1.stun);
+            if (stun > 0 && up(unit)) battle.applyStatus(unit, "stun", { duration: stun });
+          }
+        },
+        // 全弹发射: `times` missiles at atk_scale, then a splash kick at kick_atk_scale.
+        skchr_aigis_2: {
+          kind: "instant",
+          onStart({ battle, unit }) {
+            const times = Math.max(1, Math.floor(num7(b2.times, 6)));
+            const per = num7(b2.atk_scale);
+            const kick = num7(b2.kick_atk_scale);
+            const target = enemiesInGrid(battle, unit, null, { n: 1 })[0];
+            if (!target) return;
+            for (let i = 0; i < times; i++) {
+              if (!target.alive || target.removed) break;
+              battle.dealDamage(unit, target, battle.makeDamage({
+                amount: unit.s.atk * per,
+                type: "phys",
+                isSkill: true,
+                tags: ["skill"]
+              }));
+            }
+            if (!(kick > 0)) return;
+            const near = battle.foesInRadius(target.x, target.y, 1).filter((x) => x.alive);
+            const all = near.includes(target) ? near : [target, ...near];
+            for (const e of all) {
+              if (!e.alive) continue;
+              battle.dealDamage(unit, e, battle.makeDamage({
+                amount: unit.s.atk * kick,
+                type: "phys",
+                isSplash: true,
+                isSkill: true,
+                tags: ["skill"]
+              }));
+            }
+            battle.fx("takeoff", { x: unit.x, y: unit.y, id: unit.id });
+          }
+        }
+      },
+      talents: [
+        {},
+        // official empty slot (index 0)
+        {
+          // 反暗影特殊压制兵装 — 造成的物理伤害 ×damage_scale、受到的物理伤害 ×(1 − damage_resistance)。
+          // 两个半段都走引擎自己的乘区（buffs.js MUL_KEYS）：`physDealtMul` 是「造成的物理伤害」，
+          // `physTakenMul` 是「受到的物理伤害」（与 `dmgTakenMul`/脆弱 分开，正好对应官方「物理伤害」这个限定）。
+          install(battle, unit) {
+            const mods = {};
+            if (dmgScale !== 1) mods.physDealtMul = dmgScale;
+            if (dmgRes > 0) mods.physTakenMul = Math.max(0, 1 - dmgRes);
+            if (Object.keys(mods).length) statBuff(battle, unit, "talent:aigis:antishadow", mods);
+          }
+        }
+      ],
+      install(battle, unit) {
+        const airborne = (on) => {
+          if (on) {
+            unit.mem.aigisAir = true;
+            battle.addBuff(unit, { key: "trait:aigis:liftoff", flags: AIRBORNE, persist: true, allowDead: true, refresh: "replace" });
+          } else {
+            unit.mem.aigisAir = false;
+            battle.removeBuff(unit, "trait:aigis:liftoff");
+          }
+        };
+        battle.on("deploy", (c) => {
+          if (c.unit === unit) airborne(true);
+        }, { owner: unit });
+        if (up(unit)) airborne(true);
+        battle.on("skillStart", (c) => {
+          if (c.unit === unit && c.skill && c.skill.id === "skchr_aigis_1") airborne(false);
+        }, { owner: unit });
+        battle.on("skillEnd", (c) => {
+          if (c.unit === unit && c.skill && c.skill.id === "skchr_aigis_1") airborne(true);
+        }, { owner: unit });
+      }
+    };
+  }
+};
+
+// mods/marisa-native/source/server/sim/content/kits/ops/op-yukari.js
+var artsBuff = (damageUp) => ({ artsDealtMul: 1 + damageUp });
+function inHerRange(unit, ally) {
+  if (!unit?.rangeKeySet || !ally) return false;
+  for (const k of bodyKeys(ally)) if (unit.rangeKeySet.has(k)) return true;
+  return false;
+}
+var op_yukari_default = {
+  char_x_marisa_yukari: (bb, chess) => {
+    const b1 = skillRec(chess, "skchr_yukari_1")?.bb ?? {};
+    const b2 = skillRec(chess, "skchr_yukari_2")?.bb ?? {};
+    const t0 = talentBb3(chess, 0);
+    return {
+      skills: {
+        // 龙卷箭: 3 arrows + a splash, all ARTS, everything hit is 浮空.
+        skchr_yukari_1: {
+          kind: "instant",
+          onStart({ battle, unit }) {
+            const multi = num7(b1.multi_atk_scale);
+            const final = num7(b1.final_atk_scale);
+            const lev = num7(b1.levitate);
+            const main = unit.skill?.target?.alive ? unit.skill.target : battle.foesInRadius(unit.x, unit.y, 3).sort((a, b) => a.uid - b.uid)[0];
+            if (!main) return;
+            const hit = (t) => {
+              battle.dealDamage(unit, t, battle.makeDamage({ amount: unit.s.atk * multi, type: "arts", isSkill: true, tags: ["skill"] }));
+            };
+            for (let i = 0; i < 3; i++) {
+              if (!main.alive || main.removed) break;
+              hit(main);
+            }
+            if (!(final > 0)) return;
+            const around = battle.foesInRadius(main.x, main.y, 1).filter((e) => e.alive);
+            const all = around.includes(main) ? around : [main, ...around];
+            for (const e of all) {
+              if (!e.alive) continue;
+              battle.dealDamage(unit, e, battle.makeDamage({ amount: unit.s.atk * final, type: "arts", isSplash: true, isSkill: true, tags: ["skill"] }));
+              if (lev > 0 && e.alive) battle.applyStatus(e, "levitate", { duration: lev, source: unit });
+            }
+          }
+        },
+        // 明镜止水: bless up to max_target allies (结城理 first, then Casters) with a trigger-on-skill arts buff.
+        skchr_yukari_2: {
+          kind: "instant",
+          onStart({ battle, unit }) {
+            const n = Math.max(0, Math.floor(num7(b2.max_target)));
+            const dur = num7(b2.duration);
+            const up_ = num7(b2.damage_up);
+            if (!(n > 0) || !(dur > 0) || !(up_ > 0)) return;
+            const inRange2 = battle.allyUnits.filter((a) => a && a.alive && a.deployed && a.kind === "op" && a.side === "ally" && a !== unit && inHerRange(unit, a));
+            const rank = (a) => a.def?.charId === "char_x_marisa_makoto" ? 0 : a.def?.profession === "CASTER" ? 1 : 2;
+            const chosen = inRange2.slice().sort((a, b) => rank(a) - rank(b) || a.uid - b.uid).slice(0, n);
+            for (const a of chosen) a.mem.yukariBless = dur > 0 ? 1 : 0;
+            if (!chosen.length) return;
+            battle.on("skillStart", (c) => {
+              const a = c.unit;
+              if (!a || a === unit || !a.mem?.yukariBless || !a.alive) return;
+              battle.addBuff(a, { key: "talent:yukari:bless", duration: dur, refresh: "replace", mods: artsBuff(up_), tags: ["talent"] });
+            }, { owner: unit });
+          }
+        }
+      },
+      talents: [
+        {
+          // 治愈之风: after a skill ends, heal herself + up to max_target allies in her attack range.
+          install(battle, unit) {
+            const n = Math.max(0, Math.floor(num7(t0.max_target)));
+            const scale = num7(t0.heal_scale);
+            if (!(n > 0) || !(scale > 0)) return;
+            battle.on("skillEnd", (c) => {
+              if (c.unit !== unit || !up(unit)) return;
+              const amount = unit.s.atk * scale;
+              battle.heal(unit, unit, amount, { self: true, tags: ["talent"] });
+              const allies = battle.allyUnits.filter((a) => a && a.alive && a.deployed && a.kind === "op" && a.side === "ally" && a !== unit && inHerRange(unit, a)).sort((a, b) => a.uid - b.uid).slice(0, n);
+              for (const a of allies) battle.heal(unit, a, amount, { tags: ["talent"] });
+            }, { owner: unit });
+          }
+        }
+      ]
+    };
+  }
+};
 
 // mods/marisa-native/source/server/sim/buffs.js
 function resistPalsyDecay({ battle, unit }) {
@@ -4170,9 +4889,9 @@ function aggregateMods(buffs) {
 }
 
 // mods/marisa-native/source/server/sim/content/kits/ops/mod-aglna2.js
-var S1 = "skchr_aglna2_1";
-var S2 = "skchr_aglna2_2";
-var S3 = "skchr_aglna2_3";
+var S14 = "skchr_aglna2_1";
+var S24 = "skchr_aglna2_2";
+var S33 = "skchr_aglna2_3";
 var MARKER = "token_x_marisa_10071_aglna2_agairp";
 var LIFTOFF = Object.freeze({ liftoff: true, blockFly: true });
 var X4 = Object.freeze([[1, -1], [1, 0], [1, 1], [0, -1], [0, 0], [0, 1], [-1, -1], [-1, 0], [-1, 1]]);
@@ -4188,7 +4907,7 @@ var CHANT_KEY = "aglna2:chant";
 var RANGED_FORM = /* @__PURE__ */ new Set(["SNIPER", "CASTER", "MEDIC", "SUPPORT"]);
 var MOVE_KEY = "aglna2:move";
 var TAG_EXTRA = "aglna2:extra";
-var bbOf = (chess, id) => skillRec(chess, id)?.bb ?? {};
+var bbOf4 = (chess, id) => skillRec(chess, id)?.bb ?? {};
 var skillOn = (unit, id) => !!(unit.skill && unit.skill.active && unit.skill.id === id);
 var keyOf = (r, c) => `${r},${c}`;
 function takeOff(battle, unit) {
@@ -4234,8 +4953,8 @@ var mod_aglna2_default = {
   char_1015_aglna2: (bb, chess) => {
     const t0 = talentBb3(chess, 0);
     const t1 = talentBb3(chess, 1);
-    const b1 = bbOf(chess, S1), b2 = bbOf(chess, S2), b3 = bbOf(chess, S3);
-    const r1 = skillRec(chess, S1), r2 = skillRec(chess, S2), r3 = skillRec(chess, S3);
+    const b1 = bbOf4(chess, S14), b2 = bbOf4(chess, S24), b3 = bbOf4(chess, S33);
+    const r1 = skillRec(chess, S14), r2 = skillRec(chess, S24), r3 = skillRec(chess, S33);
     const g39 = (r3?.rangeGrid ?? []).map((p) => [p[0], p[1]]);
     const seen = new Set(g39.map(([r, c]) => keyOf(r, c)));
     const g39x4 = [...g39, ...X4.filter(([r, c]) => !seen.has(keyOf(r, c))).map((p) => [p[0], p[1]])];
@@ -4293,7 +5012,7 @@ var mod_aglna2_default = {
       trait: { blockFly: false },
       // the profession's permanent air block: only while airborne here
       skills: {
-        [S1]: {
+        [S14]: {
           // MOD（负责人 2026-10-08 裁决，走 W2）：S1 极速送达是**部署被动**——技能文本「部署后立刻起飞，攻击范围扩大，
           // 攻击力+75%，同时攻击两个目标」+ 官方 operator 记录（data/backups.json）的 PASSIVE / ON_DEPLOY。
           // 我们的 data/chess.json 原来写成 `skillType MANUAL` + 数值 `spType 8`（DATA.md §数据约定：skill_table 的
@@ -4316,7 +5035,7 @@ var mod_aglna2_default = {
             land(battle, unit);
           }
         },
-        [S2]: {
+        [S24]: {
           // MOD: `levitate: true` 是**给引擎读的 spec 字段**，不是 skill flag —— content/garrisons/battle.js 的
           // MOD_TRIGGER_levitate_skill_cast 就是按这个字段判定「这次施放能施加浮空」并付 visiShip / miraShip 的
           // 盟约层（上游原实现只在 onStart 里 glide() 直接施加 status，没有这个字段，于是这次施法不再计入盟约）。
@@ -4338,7 +5057,7 @@ var mod_aglna2_default = {
             land(battle, unit);
           }
         },
-        [S3]: {
+        [S33]: {
           kind: "ammo",
           // The skill's initial attack area includes the eight surrounding tiles as well as its 3-9 grid.
           trigger: { rule: "ACTIVE_RANGE", grid: g39x4 },
@@ -4413,21 +5132,21 @@ var mod_aglna2_default = {
           if (ctx.target !== unit || !RESIST_STATUSES.has(ctx.status) || ctx.source && ctx.source.side === "ally") return;
           if (unit.findBuff(CHANT_KEY) || unit.findBuff(MOVE_KEY)) ctx.cancel = true;
         }, { owner: unit });
-        if (sid !== S3) return;
+        if (sid !== S33) return;
         const dr = num7(b3.damage_resistance), slow = -num7(b3.move_speed);
         const aspdB = num7(b3["aglna2_s_3[blocked].attack_speed"]), aspdU = num7(b3["aglna2_s_3[unblocked].attack_speed"]);
-        if (aspdB) toggleBuff(battle, unit, "skill:aglna2:blocked", () => skillOn(unit, S3) && unit.blocking.length > 0, { aspd: aspdB });
-        if (aspdU) toggleBuff(battle, unit, "skill:aglna2:unblocked", () => skillOn(unit, S3) && unit.blocking.length === 0, { aspd: aspdU });
+        if (aspdB) toggleBuff(battle, unit, "skill:aglna2:blocked", () => skillOn(unit, S33) && unit.blocking.length > 0, { aspd: aspdB });
+        if (aspdU) toggleBuff(battle, unit, "skill:aglna2:unblocked", () => skillOn(unit, S33) && unit.blocking.length === 0, { aspd: aspdU });
         if (dr > 0) {
           battle.on("hit", (ctx) => {
             const s = ctx.source, d = ctx.dmg;
-            if (ctx.target !== unit || !skillOn(unit, S3) || !s || !s.isFlying || !d || d.type !== "phys" && d.type !== "arts") return;
+            if (ctx.target !== unit || !skillOn(unit, S33) || !s || !s.isFlying || !d || d.type !== "phys" && d.type !== "arts") return;
             if (d.tags && d.tags.includes("dot")) return;
             d.mul = (d.mul ?? 1) * (1 - dr);
           }, { owner: unit });
         }
         battle.on("beforeAttack", (ctx) => {
-          if (ctx.attacker !== unit || !skillOn(unit, S3)) return;
+          if (ctx.attacker !== unit || !skillOn(unit, S33)) return;
           const prof = ctx.profile || unit.profile;
           const cands = battle.enemiesInKeys(unit.rangeKeys, unit, prof);
           for (const e of battle.blockedTargets(unit, prof)) if (!cands.includes(e)) cands.push(e);
@@ -4449,7 +5168,7 @@ var mod_aglna2_default = {
           if (out.length) ctx.targets = out;
         }, { owner: unit });
         battle.on("tick", () => {
-          if (!skillOn(unit, S3) || !up(unit)) return;
+          if (!skillOn(unit, S33) || !up(unit)) return;
           if (slow > 0) {
             const keys = unit.rangeKeySet;
             for (const e of battle.enemies) {
@@ -4459,7 +5178,7 @@ var mod_aglna2_default = {
           }
         }, { owner: unit });
         battle.every(MOVE_CHECK, () => {
-          if (!st || !skillOn(unit, S3) || !up(unit) || st.flight || !unit.canAct || unit.blocking.length) return;
+          if (!st || !skillOn(unit, S33) || !up(unit) || st.flight || !unit.canAct || unit.blocking.length) return;
           const tgt = moveTarget(battle, unit);
           if (!tgt) return;
           const dur = hypot(tgt.r - unit.tileR, tgt.c - unit.tileC) / MOVE_SPEED;
@@ -4470,7 +5189,7 @@ var mod_aglna2_default = {
           battle.fx("dash", { x: unit.x, y: unit.y, id: unit.id, tx: tgt.c, ty: tgt.r, t: dur });
           battle.after(dur, () => {
             battle.removeBuff(unit, MOVE_KEY);
-            if (!st || !skillOn(unit, S3) || unit.skill.activations !== act || !up(unit)) return;
+            if (!st || !skillOn(unit, S33) || unit.skill.activations !== act || !up(unit)) return;
             st.flight = null;
             const now = moveTarget(battle, unit);
             if (now) moveTo(battle, unit, now.r, now.c);
@@ -4487,9 +5206,9 @@ var mod_aglna2_default = {
 };
 
 // mods/marisa-native/source/server/sim/content/kits/ops/mod-kalts2.js
-var S12 = "skchr_kalts2_1";
-var S22 = "skchr_kalts2_2";
-var S32 = "skchr_kalts2_3";
+var S15 = "skchr_kalts2_1";
+var S25 = "skchr_kalts2_2";
+var S34 = "skchr_kalts2_3";
 var ANCHOR = "token_x_marisa_10068_kalts2_mtship";
 var KALTS_MON3TR = "token_10002_kalts_mon3tr";
 var S2_RADIUS = 1.5;
@@ -4505,7 +5224,7 @@ var T2_REGEN = "talent:kalts2:regen";
 var S1_KEY = "skill:kalts2:blockRadius";
 var ANCHOR_KEY = "kalts2:anchor";
 var TAG_S2 = "kalts2:s2";
-var bbOf2 = (chess, id) => skillRec(chess, id)?.bb ?? {};
+var bbOf5 = (chess, id) => skillRec(chess, id)?.bb ?? {};
 var skillOn2 = (unit, id) => !!(unit.skill && unit.skill.active && unit.skill.id === id);
 var isAnchorOf = (t, unit) => !!t && t.kind === "token" && t.defId === ANCHOR && t.ownerUnit === unit;
 var anchorsOf = (battle, unit) => battle.allyUnits.filter((t) => isAnchorOf(t, unit));
@@ -4605,7 +5324,7 @@ function startTransport(battle, unit, anchor) {
   for (const a of picks) {
     const seq = a.deploySeq;
     battle.after(WITHDRAW_DELAY, () => {
-      if (!up(a) || a.deploySeq !== seq || !unit.alive || !skillOn2(unit, S32)) return;
+      if (!up(a) || a.deploySeq !== seq || !unit.alive || !skillOn2(unit, S34)) return;
       battle.retreat(a, { reason: "retreat" });
       if (a.alive) return;
       if (!battle.redeploy(a, { free: true })) a.respawnAt = Math.min(a.respawnAt, battle.time);
@@ -4623,7 +5342,7 @@ function startTransport(battle, unit, anchor) {
 }
 function tryTransport(battle, unit) {
   const m = unit.mem;
-  if (!skillOn2(unit, S32) || m.k2flight || m.k2landed || !up(unit) || unit.hidden) return;
+  if (!skillOn2(unit, S34) || m.k2flight || m.k2landed || !up(unit) || unit.hidden) return;
   const a = m.k2link;
   if (!a || !up(a) || !isAnchorOf(a, unit)) return;
   startTransport(battle, unit, a);
@@ -4632,14 +5351,14 @@ var mod_kalts2_default = {
   char_1052_kalts2: (bb, chess) => {
     const t0 = talentBb3(chess, 0);
     const t1 = talentBb3(chess, 1);
-    const b1 = bbOf2(chess, S12), b2 = bbOf2(chess, S22), b3 = bbOf2(chess, S32);
-    const s2 = skillRec(chess, S22);
+    const b1 = bbOf5(chess, S15), b2 = bbOf5(chess, S25), b3 = bbOf5(chess, S34);
+    const s2 = skillRec(chess, S25);
     const picked = chess?.skill?.skillId ?? null;
     return {
       trait: { healThrough: (healer, a) => !!a && a.kind === "token" && a.defId === KALTS_MON3TR },
       skills: {
-        [S12]: { kind: "duration", mods: { atkPct: num7(b1.atk), aspd: num7(b1.attack_speed) } },
-        [S22]: {
+        [S15]: { kind: "duration", mods: { atkPct: num7(b1.atk), aspd: num7(b1.attack_speed) } },
+        [S25]: {
           kind: "ammo",
           // The larger active range contains attack targets as well as patients (#406).
           trigger: { rule: "ACTIVE_RANGE", grid: s2?.rangeGrid, enemies: true },
@@ -4657,7 +5376,7 @@ var mod_kalts2_default = {
             }
           }
         },
-        [S32]: {
+        [S34]: {
           kind: "duration",
           mods: { atkPct: num7(b3.atk), batPct: batMod(b3.base_attack_time, chess) },
           targeting: { maxTargets: 2 },
@@ -4729,9 +5448,9 @@ var mod_kalts2_default = {
           if (f && unit.alive) collide(battle, unit, f);
         }, { owner: unit });
         const v1 = num7(b1["attack@block_radius_scale"]);
-        if (picked === S12 && v1 > 0) {
+        if (picked === S15 && v1 > 0) {
           battle.every(S1_AURA_IV, () => {
-            if (!up(unit) || !skillOn2(unit, S12)) return;
+            if (!up(unit) || !skillOn2(unit, S15)) return;
             for (const a of battle.allyUnits) {
               if (!otherOp(a, unit) || !a.s.flags.liftoff) continue;
               const cur = a.findBuff(S1_KEY);
@@ -4746,210 +5465,135 @@ var mod_kalts2_default = {
   }
 };
 
-// mods/marisa-native/source/server/sim/content/bonds/addon/battle.js
-var ID = Object.freeze({ rhode: "bond_x_marisa_rhodeShip" });
-var KEY = Object.freeze({
-  preci: "bond:preciShip",
-  stead: "bond:steadShip",
-  deput: "bond:deputShip",
-  skillful: "bond:skillfulShip",
-  raid: "bond:raidShip",
-  raidAspd: "bond:raidShip:aspd",
-  empty: "bond:emptyShip",
-  emptyDmg: "bond:emptyShip:dmg",
-  solo: "bond:soloShip",
-  sunt: "bond:suntShip",
-  arcane: "bond:arcaneShip",
-  rhodeHeal: "bond:bond_x_marisa_rhodeShip:heal",
-  rhodeAtk: "bond:bond_x_marisa_rhodeShip:overflow"
-});
-var RHODE_MOD_KEY = "MOD_bond_rhode";
-var BB_KEY = Object.freeze({ [ID.rhode]: RHODE_MOD_KEY });
-var LAYERED = /* @__PURE__ */ new Set([ID.preci, ID.swift, ID.skillful, ID.arcane, ID.stead, ID.deput, ID.raid, ID.indom, ID.rhode]);
-var STEAD_CD = "bond:steadShip:cd";
-var AURA_POLL = 0.25;
-var RAID_POLL = 0.25;
-var RAID_SEARCH = 2;
-var RAID_TARGETS = 8;
-var arcaneMods = (v) => ({ artsTakenMul: v });
-function bondBb(bondId) {
-  return buffParams(bondRecord(bondId), "env_gbuff_new") ?? {};
+// mods/marisa-native/source/server/sim/content/bonds/addon/unite.js
+var BOND = "bond_x_marisa_uniteShip";
+var MOD_KEY = "MOD_bond_unite";
+var KEY = "bond:bond_x_marisa_uniteShip";
+var GUARD_KEY = "bond:unite:guard";
+var PRIO_AID = 9;
+var GUARD_TAKEN_MUL = 0.8;
+var GUARD_SEC = 3;
+var DEFAULTS = Object.freeze({ layer_on_skill: 1, layer_on_kill: 2, aid_layer_skill: 2, aid_layer_kill: 3 });
+var SKILL_MEMBERS = Object.freeze(["chess_char_1_10_a", "chess_x_marisa_headbr_a"]);
+var KILL_MEMBERS = Object.freeze(["chess_x_marisa_headb2_a", "chess_x_marisa_helage_a"]);
+var STAT_MEMBERS = Object.freeze(["chess_x_marisa_headbr_a", "chess_x_marisa_headb2_a"]);
+var STAT_DEFAULTS = Object.freeze({ stat_per_step: 0.05, stat_step: 10, stat_cap: 1 });
+var LAYER_PER_ROUND_MAX = 10;
+var LAYER_CAP_KEY = "bond_x_marisa_uniteShip:layersPerRound";
+var STAT_KEY = "bond:bond_x_marisa_uniteShip:stat";
+var uniteBb = () => buffParams(bondRecord(BOND), MOD_KEY) ?? {};
+var int = (v, d) => Math.max(0, Math.floor(num5(v, d)));
+function installUnite(battle) {
+  if (!battle || !Array.isArray(battle.players) || !battle.players.length) return;
+  const pids = /* @__PURE__ */ new Set();
+  for (const ps of battle.players) if (bondActive(battle, ps.playerId, BOND)) pids.add(ps.playerId);
+  if (!pids.size) return;
+  const bb = uniteBb();
+  const aidSkill = int(bb.aid_layer_skill, DEFAULTS.aid_layer_skill);
+  const aidKill = int(bb.aid_layer_kill, DEFAULTS.aid_layer_kill);
+  const statStep = Math.max(1, int(bb.stat_step, STAT_DEFAULTS.stat_step));
+  const statPer = num5(bb.stat_per_step, STAT_DEFAULTS.stat_per_step);
+  const statCap = num5(bb.stat_cap, STAT_DEFAULTS.stat_cap);
+  const aidLayerOf = (u) => {
+    const id = baseChessId(u);
+    return SKILL_MEMBERS.includes(id) ? aidSkill : KILL_MEMBERS.includes(id) ? aidKill : 0;
+  };
+  const layerCap = int(bb.layer_per_round_max, LAYER_PER_ROUND_MAX);
+  const grant = (u, n, reason) => {
+    if (!(n > 0) || !u) return 0;
+    const added = gainLayers(battle, {
+      playerId: u.ownerId,
+      bonds: BOND,
+      n,
+      requireActive: true,
+      source: u,
+      reason,
+      // the bond-wide quota of the round; when a declaration asks for 0 / a negative quota, nothing is granted
+      cap: layerCap,
+      capKey: LAYER_CAP_KEY
+    });
+    if (added > 0) fxOn(battle, "layer", u, KEY, BOND, { bond: BOND, n: added });
+    return added;
+  };
+  const helped = () => battleStore(battle, "unite:aidHelper", () => /* @__PURE__ */ new Set());
+  const statPctOf = (pid) => {
+    const L3 = Math.max(0, num5(bondLayers(battle, pid, BOND), 0));
+    return Math.min(statCap, Math.floor(L3 / statStep) * statPer);
+  };
+  const applyStats = () => {
+    for (const pid of pids) {
+      const pct = statPctOf(pid);
+      for (const u of playerOps(battle, pid, { fieldOnly: false })) {
+        if (!STAT_MEMBERS.includes(baseChessId(u))) continue;
+        if (pct > 0) passiveBuff(battle, u, STAT_KEY, directMods({ atk: pct, hp: pct }));
+        else battle.removeBuff(u, STAT_KEY);
+      }
+    }
+  };
+  applyStats();
+  battle.on("battleStart", applyStats);
+  battle.on("deploy", ({ unit }) => {
+    if (unit && pids.has(unit.ownerId)) applyStats();
+  });
+  battle.on("layerGain", (c) => {
+    if (!pids.has(c.playerId) || c.bondId !== BOND) return;
+    battle.after(0, applyStats);
+  }, { priority: -100 });
+  battle.on("death", (c) => {
+    if (c.reason !== "killed") return;
+    const v = c.unit;
+    if (!isOp(v) || !pids.has(v.ownerId) || !bondActive(battle, v.ownerId, BOND)) return;
+    if (v.alive || v.removed) return;
+    const spent = helped();
+    const ring = [];
+    for (const a of alliesAround(battle, v, N8)) if (isOp(a) && onField(a) && !spent.has(a.id)) ring.push(a);
+    if (!ring.length) return;
+    ring.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const helper = ring.length === 1 ? ring[0] : battle.rng.pick(ring);
+    if (!helper) return;
+    const avg = (num5(v.hp, 0) + num5(helper.hp, 0)) / 2;
+    if (!reviveNow(battle, c, "bond")) return;
+    spent.add(helper.id);
+    for (const a of [v, helper]) {
+      if (!a.alive) continue;
+      a.hp = Math.max(1, Math.min(a.s.maxHp, avg));
+      battle.addBuff(a, { key: GUARD_KEY, duration: GUARD_SEC, mods: { dmgTakenMul: GUARD_TAKEN_MUL } });
+    }
+    fxOn(battle, "bondProc", v, KEY, "aid", { n: 2 });
+    for (const m of playerOps(battle, v.ownerId, { fieldOnly: true })) {
+      if (!isMember(battle, m, BOND)) continue;
+      grant(m, aidLayerOf(m), "bond");
+    }
+  }, { priority: PRIO_AID });
 }
-var procChance = (bb, L2) => Math.max(0, Math.min(1, num5(bb.base_prob) + num5(bb.prob_per_stack) * L2));
-var prob = procChance;
-function makeState(battle, p) {
-  const pid = p.playerId;
-  const ops = playerOps(battle, pid);
-  const st = { pid, ops, tiers: {}, bb: {}, members: {} };
-  for (const id of Object.values(ID)) {
-    const t = bondTier(battle, pid, id);
-    if (t <= 0) continue;
-    st.tiers[id] = t;
-    st.bb[id] = BB_KEY[id] ? buffParams(bondRecord(id), BB_KEY[id]) ?? {} : bondBb(id);
-    st.members[id] = new Set(ops.filter((u) => isMember(battle, u, id)));
-  }
-  return st;
-}
+
+// mods/marisa-native/source/server/sim/content/bonds/addon/rhode.js
+var BOND2 = "bond_x_marisa_rhodeShip";
+var MOD_KEY2 = "MOD_bond_rhode";
+var KEY2 = Object.freeze({ heal: "bond:bond_x_marisa_rhodeShip:heal", atk: "bond:bond_x_marisa_rhodeShip:overflow" });
 var L = (battle, st, id) => bondLayers(battle, st.pid, id);
 var fin = (v, d) => Number.isFinite(v) ? v : d;
-function applyPassives(battle, st) {
-  const t = st.tiers;
-  if (t[ID.preci]) {
-    const bb = st.bb[ID.preci];
-    const wide = t[ID.preci] >= 2;
-    const mods = directMods({ atk: num5(bb.base_atk) + num5(bb.atk_per_stack) * L(battle, st, ID.preci) });
-    if (wide) {
-      mods.defIgnorePct = num5(bb.power_def_penetrate);
-      mods.resIgnorePct = num5(bb.power_magic_resist_penetrate);
-    }
-    for (const u of st.ops) {
-      if (st.members[ID.preci].has(u) || wide && u.def?.position === "RANGED") passiveBuff(battle, u, KEY.preci, mods);
-    }
-  }
-  if (t[ID.stead]) {
-    const bb = st.bb[ID.stead];
-    const mods = directMods({ hp: num5(bb.base_max_hp) + num5(bb.max_hp_per_stack) * L(battle, st, ID.stead) });
-    for (const u of st.ops) passiveBuff(battle, u, KEY.stead, mods);
-  }
-  if (t[ID.deput]) {
-    const bb = st.bb[ID.deput];
-    const mods = directMods({ def: num5(bb.base_def) + num5(bb.def_per_stack) * L(battle, st, ID.deput) }, { redeployMul: Math.max(0, 1 + num5(bb.respawn_time)) });
-    for (const u of st.ops) passiveBuff(battle, u, KEY.deput, mods);
-  }
-  if (t[ID.raid]) {
-    const bb = st.bb[ID.raid];
-    const lv = L(battle, st, ID.raid);
-    const milestone = num5(bb.power_bond_stack_cnt, Infinity);
-    if (lv >= milestone) {
-      const mods = { aspd: num5(bb.power_attack_speed) };
-      for (const u of st.ops) passiveBuff(battle, u, KEY.raidAspd, mods);
-      if (!st.raidMilestone) {
-        st.raidMilestone = true;
-        for (const u of st.members[ID.raid]) if (onField(u)) {
-          fxOn(battle, "bondMilestone", u, KEY.raid, "aspd");
-          break;
-        }
-      }
-    }
-    st.raidMods = raidMods(bb, lv);
-    for (const u of st.members[ID.raid]) {
-      const b = u.findBuff(KEY.raid);
-      if (b) {
-        b.mods = st.raidMods;
-        u.markDirty();
-      }
-    }
-  }
-  if (t[ID.arcane]) {
-    const bb = st.bb[ID.arcane];
-    const m = num5(bb.base_damage_scale, 1) + num5(bb.damage_scale_per_stack) * L(battle, st, ID.arcane);
-    st.arcaneMul = Math.max(0, m);
-    st.arcaneLowMul = Math.max(0, m * num5(bb.power_weak_scale, 1));
-  }
-  if (t[ID.skillful]) {
-    const bb = st.bb[ID.skillful];
-    const lv = L(battle, st, ID.skillful);
-    const v = num5(bb.base_attack_speed) + num5(bb.attack_speed_per_stack) * lv;
-    if (!st.auraMods || st.auraMods.aspd !== v) st.auraMods = { aspd: v };
-    st.auraWide = lv >= num5(bb.power_bond_stack_cnt, Infinity);
-  }
-  if (t[ID.rhode]) {
-    const mul = rhodeHealMul(st.bb[ID.rhode], L(battle, st, ID.rhode));
-    for (const u of st.ops) passiveBuff(battle, u, KEY.rhodeHeal, { healingTakenMul: mul });
-  }
-}
-function raidMods(bb, lv) {
-  const mods = directMods({
-    atk: num5(bb.base_atk) + num5(bb.atk_per_stack) * lv,
-    hp: num5(bb.base_max_hp) + num5(bb.max_hp_per_stack) * lv
-  });
-  const aspd = num5(bb.base_attack_speed) + num5(bb.attack_speed_per_stack) * lv;
-  if (aspd) mods.aspd = aspd;
-  return mods;
-}
-function applyStatic(battle, st) {
-  const t = st.tiers;
-  if (t[ID.empty]) {
-    const bb = st.bb[ID.empty];
-    const taken = Math.max(0, 1 - num5(bb.damage_resistance));
-    for (const u of st.ops) {
-      passiveBuff(battle, u, KEY.empty, { physTakenMul: taken, artsTakenMul: taken });
-      if (st.members[ID.empty].has(u)) {
-        passiveBuff(battle, u, KEY.emptyDmg, { dmgDealtMul: num5(isElite(u) ? bb.damage_scale_extra : bb.damage_scale_normal, 1) });
-      }
-    }
-  }
-  if (t[ID.solo]) {
-    const bb = st.bb[ID.solo];
-    const mods = directMods({ atk: num5(bb.atk), hp: num5(bb.max_hp) });
-    for (const u of st.members[ID.solo]) passiveBuff(battle, u, KEY.solo, mods);
-  }
-  if (t[ID.sunt]) {
-    const bb = st.bb[ID.sunt];
-    const mods = directMods({ atk: num5(bb.power_atk) });
-    for (const u of st.ops) {
-      if (!isElite(u)) continue;
-      passiveBuff(battle, u, KEY.sunt, mods);
-      if (t[ID.sunt] >= 2) suntSpCost(u, bb);
-    }
-  }
-}
-function suntSpCost(u, bb) {
-  const sk = u && u.skill;
-  if (!sk || sk.noSkill || u.mem[KEY.sunt]) return;
-  u.mem[KEY.sunt] = true;
-  sk.spCostMul = sk.spCostMul * num5(bb.sp_ratio, 1);
-}
-function updateAura(battle, st) {
-  const mods = st.auraMods;
-  if (!mods) return;
-  const next = st.auraNext ?? (st.auraNext = /* @__PURE__ */ new Set());
-  next.clear();
-  const offs = st.auraWide ? N8 : N4;
-  for (const m of st.members[ID.skillful]) {
-    const active = onField(m);
-    if (!active && (m.removeReason !== "killed" || !battle.isDown(m))) continue;
-    if (active) next.add(m);
-    const [r, c] = active ? [m.tileR, m.tileC] : battle.restTile(m);
-    for (const [dr, dc] of offs) {
-      const a = battle.unitAt(r + dr, c + dc);
-      if (a && a.kind === "op" && a.ownerId === st.pid && onField(a)) next.add(a);
-    }
-  }
-  const cur = st.aura ?? (st.aura = /* @__PURE__ */ new Set());
-  for (const u of cur) if (!next.has(u)) battle.removeBuff(u, KEY.skillful);
-  for (const u of next) {
-    const b = u.findBuff(KEY.skillful);
-    if (!b) battle.addBuff(u, { key: KEY.skillful, mods });
-    else if (b.mods !== mods) {
-      b.mods = mods;
-      u.markDirty();
-    }
-  }
-  st.aura = next;
-  st.auraNext = cur;
-}
-function rhodeHealMul(bb, L2) {
+function rhodeHealMul(bb, L3) {
   const step = Math.max(1, Math.floor(num5(bb.heal_eff_step, 5)));
-  return 1 + num5(bb.heal_eff_per_step, 0.01) * Math.floor(Math.max(0, num5(L2, 0)) / step);
+  return 1 + num5(bb.heal_eff_per_step, 0.01) * Math.floor(Math.max(0, num5(L3, 0)) / step);
 }
-function rhodeAuraInterval(bb, L2) {
+function rhodeAuraInterval(bb, L3) {
   const min = num5(bb.aura_interval_min, 0.5), max = num5(bb.aura_interval_max, 5);
   const lMax = Math.max(1e-9, 100 * num5(bb.aura_l_max, 1));
-  const l = Math.max(0, Math.min(lMax, num5(L2, 0)));
+  const l = Math.max(0, Math.min(lMax, num5(L3, 0)));
   return Math.max(0, min + (max - min) * (1 - Math.sqrt(l / lMax)));
 }
 function rhodeLayerCap(battle, st) {
   let cap = 0;
   for (const id of activeBondIds(battle, st.pid)) {
-    if (id === ID.rhode) continue;
+    if (id === BOND2) continue;
     cap = Math.max(cap, bondLayers(battle, st.pid, id));
   }
   return Math.max(cap, num5(st.rhodeCapHint, 0));
 }
 function rhodeFieldCount(st) {
   const seen = /* @__PURE__ */ new Set();
-  for (const m of st.members[ID.rhode]) if (onField(m)) seen.add(baseChessId(m));
+  for (const m of st.members[BOND2]) if (onField(m)) seen.add(baseChessId(m));
   return seen.size;
 }
 function rhodeEffOf(bb, count) {
@@ -4962,9 +5606,9 @@ function rhodeEffOf(bb, count) {
 function rhodeMirror(battle, st, c) {
   const src = c.source;
   if (!src || src.kind !== "op" || src.ownerId !== st.pid || !onField(src)) return 0;
-  if (st.members[ID.rhode].has(src)) return 0;
+  if (st.members[BOND2].has(src)) return 0;
   let covered = false;
-  for (const m of st.members[ID.rhode]) if (onField(m) && inRange(m, src)) {
+  for (const m of st.members[BOND2]) if (onField(m) && inRange(m, src)) {
     covered = true;
     break;
   }
@@ -4975,7 +5619,7 @@ function rhodeMirror(battle, st, c) {
   st.rhodeCapHint = bondLayers(battle, st.pid, c.bondId) + n;
   let added;
   try {
-    added = gainLayers(battle, { playerId: st.pid, bonds: ID.rhode, n, requireActive: true, source: src, reason: "bond" });
+    added = gainLayers(battle, { playerId: st.pid, bonds: BOND2, n, requireActive: true, source: src, reason: "bond" });
   } finally {
     st.rhodeCapHint = hint;
   }
@@ -4983,8 +5627,8 @@ function rhodeMirror(battle, st, c) {
   return added;
 }
 function rhodeHealStrike(battle, st, t, amount) {
-  const bb = st.bb[ID.rhode];
-  const lv = L(battle, st, ID.rhode);
+  const bb = st.bb[BOND2];
+  const lv = L(battle, st, BOND2);
   const dmgAmount = amount * lv * num5(bb.weakness_scale, 0.1);
   if (!(dmgAmount > 0)) return 0;
   const radius = Math.max(1, Math.floor(num5(bb.weakness_radius, 1)));
@@ -5009,11 +5653,11 @@ function rhodeHealStrike(battle, st, t, amount) {
 }
 function rhodeAuraOn(battle, st) {
   const seen = /* @__PURE__ */ new Set();
-  for (const m of st.members[ID.rhode]) if (onField(m)) seen.add(baseChessId(m));
+  for (const m of st.members[BOND2]) if (onField(m)) seen.add(baseChessId(m));
   return seen.size >= 2;
 }
 function rhodeAtkBasis(u) {
-  const { add: m, mul } = aggregateMods(u.buffs.filter((b) => b.key !== KEY.rhodeAtk));
+  const { add: m, mul } = aggregateMods(u.buffs.filter((b) => b.key !== KEY2.atk));
   const finalMul = (mul.atkMul ?? 1) * (u.cultMul?.atk ?? 1);
   const b0 = u.base;
   const own3 = Math.max(0, fin(((b0.atk + (m.atkFlat ?? 0)) * Math.max(0, 1 + (m.atkPct ?? 0)) + (m.atkFinal ?? 0)) * finalMul, fin(b0.atk, 0)));
@@ -5029,10 +5673,10 @@ function rhodeAtkTick({ unit: u, buff }) {
   }
 }
 function rhodeOverflowAtk(battle, u, overflow, bb, decay) {
-  const cur = u.findBuff(KEY.rhodeAtk);
+  const cur = u.findBuff(KEY2.atk);
   const { own: own3, finalMul } = rhodeAtkBasis(u);
   if (!(finalMul > 0)) {
-    battle.removeBuff(u, KEY.rhodeAtk);
+    battle.removeBuff(u, KEY2.atk);
     return 0;
   }
   const prev = cur ? num5(cur.data.amount, 0) : 0;
@@ -5041,7 +5685,7 @@ function rhodeOverflowAtk(battle, u, overflow, bb, decay) {
   const next = Math.min(cap, prev + overflow);
   if (!(next > 0)) return 0;
   battle.addBuff(u, {
-    key: KEY.rhodeAtk,
+    key: KEY2.atk,
     duration: decay,
     refresh: "replace",
     mods: { atkFinal: next / finalMul },
@@ -5052,9 +5696,9 @@ function rhodeOverflowAtk(battle, u, overflow, bb, decay) {
 }
 var rhodeHealRefused = (u) => !!(u.s.flags.noHeal || u.s.flags.healFree || u.profile && u.profile.noHeal);
 function rhodePulse(battle, st) {
-  const bb = st.bb[ID.rhode];
+  const bb = st.bb[BOND2];
   const decay = num5(bb.aura_decay_sec, 2);
-  const lv = L(battle, st, ID.rhode);
+  const lv = L(battle, st, BOND2);
   const interval = rhodeAuraInterval(bb, lv);
   if (rhodeAuraOn(battle, st)) {
     let anchor = null;
@@ -5078,7 +5722,7 @@ function rhodePulse(battle, st) {
 function installRhodeAura(battle, st) {
   const arm = () => {
     if (battle.finished) return;
-    st.auraAt = (st.auraAt ?? battle.time) + rhodeAuraInterval(st.bb[ID.rhode], L(battle, st, ID.rhode));
+    st.auraAt = (st.auraAt ?? battle.time) + rhodeAuraInterval(st.bb[BOND2], L(battle, st, BOND2));
     battle.after(Math.max(0, st.auraAt - battle.time), () => {
       if (battle.finished) return;
       rhodePulse(battle, st);
@@ -5128,6 +5772,980 @@ function installRhodeDotCap(battle, isOurOp, cap) {
     if (st.preCut) b.timeLeft = Math.min(b.timeLeft, cap);
     return b;
   };
+}
+function rhodeApplyPassive(battle, st) {
+  const mul = rhodeHealMul(st.bb[BOND2], L(battle, st, BOND2));
+  for (const u of st.ops) passiveBuff(battle, u, KEY2.heal, { healingTakenMul: mul });
+}
+function installRhode(battle, states, byPid) {
+  const rhode = states.filter((st) => st.tiers[BOND2]);
+  if (!rhode.length) return;
+  battle.on("layerGain", (c) => {
+    if (c.bondId === BOND2) return;
+    const st = byPid[c.playerId];
+    if (!st || !st.tiers[BOND2]) return;
+    rhodeMirror(battle, st, c);
+  }, { priority: -50 });
+  battle.on("layerGain", (c) => {
+    if (c.bondId !== BOND2) return;
+    const st = byPid[c.playerId];
+    if (!st || !st.tiers[BOND2]) return;
+    const bb = st.bb[BOND2] || {};
+    const eff = rhodeEffOf(bb, rhodeFieldCount(st));
+    const total = Math.max(0, num5(st.rhodeFrac, 0)) + Math.max(0, num5(c.n, 0)) * eff;
+    let n = Math.floor(total + 1e-9);
+    st.rhodeFrac = total - n;
+    const room = rhodeLayerCap(battle, st) - L(battle, st, BOND2);
+    if (n > room) n = Math.max(0, room);
+    c.n = n;
+  }, { priority: -60 });
+  const rhodePids = new Set(rhode.map((st) => st.pid));
+  battle.on("beforeAttack", ({ attacker }) => {
+    if (!attacker || !rhodePids.has(attacker.ownerId)) return;
+    const buff = attacker.findBuff(KEY2.atk);
+    if (buff) rhodeAtkTick({ unit: attacker, buff });
+  }, { priority: 1e3 });
+  installRhodeDotCap(battle, (u) => !!(u && u.side === "ally" && u.kind === "op" && rhodePids.has(u.ownerId)), num5(rhode[0].bb[BOND2].dot_duration_cap, 5));
+  battle.on("heal", (c) => {
+    const t = c.target;
+    if (!t || t.side !== "ally" || !isOp(t) || !t.alive || !t.deployed) return;
+    const st = byPid[t.ownerId];
+    if (!st || !st.tiers[BOND2]) return;
+    if (st.probe === t) st.probeAmt = num5(c.amount, 0);
+    if (st.striking) return;
+    const actual = Math.max(0, Math.min(num5(c.amount, 0), t.s.maxHp - t.hp));
+    if (!(actual > 0)) return;
+    st.striking = true;
+    try {
+      rhodeHealStrike(battle, st, t, actual);
+    } finally {
+      st.striking = false;
+    }
+  }, { priority: -1e3 });
+  for (const st of rhode) if (st.tiers[BOND2] >= 2) installRhodeAura(battle, st);
+}
+
+// mods/marisa-native/source/server/sim/content/garrisons/battle.js
+var ids = (s) => String(s ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+var EMPTY2 = Object.freeze([]);
+var AB_FLAG_STATUS = Object.freeze({ 16: "freeze" });
+function garrisonIdsOf(u) {
+  const list = u?.def?.raw?.garrisonIds ?? u?.def?.garrisonIds;
+  return Array.isArray(list) ? list : EMPTY2;
+}
+var BONUS = /* @__PURE__ */ new WeakMap();
+var ALLOUT_BONUS_KEY = "act1autochess_gar_eff_alloutBonus";
+function install(battle) {
+  const all = [];
+  const owned = /* @__PURE__ */ new Map();
+  const add = (unit, g, grantedBy = null) => {
+    let set = owned.get(unit);
+    if (!set) {
+      set = /* @__PURE__ */ new Set();
+      owned.set(unit, set);
+    }
+    if (set.has(g.garrisonId)) return null;
+    set.add(g.garrisonId);
+    const bb = g.bb || {};
+    const cap = num5(bb.max_add_count_per_battle, 0) > 0 ? num5(bb.max_add_count_per_battle) : Infinity;
+    const it = {
+      // The battle rune of the record (bbStr.key, e.g. the MOD_TRIGGER_* of the MOD chess, DATA §4) wins over the
+      // generic effectKey: it is what selects the handler, while effectKey stays the data's coarse family
+      // (act1autochess_gar_event_selfdead covers every MOD_TRIGGER_* record).
+      unit,
+      g,
+      gid: g.garrisonId,
+      key: g.bbStr && g.bbStr.key || g.effectKey,
+      bb,
+      bbStr: g.bbStr || {},
+      grantedBy,
+      cap,
+      capKey: `gar:${g.garrisonId}:${unit.id}`,
+      cnt: 0,
+      k: -1
+    };
+    all.push(it);
+    return it;
+  };
+  for (const u of battle.allyUnits) {
+    if (!isOp(u)) continue;
+    for (const gid of garrisonIdsOf(u)) {
+      const g = garrisonRecord(gid);
+      if (g && g.scriptHandler && g.eventType === "IN_BATTLE") add(u, g);
+    }
+  }
+  if (!all.length) return;
+  const grants = [];
+  for (const it of all.slice()) {
+    if (it.key !== "ADD_BOND") continue;
+    const g2 = garrisonRecord(it.bbStr.give_garrison_id);
+    if (!g2 || g2.eventType !== "IN_BATTLE") continue;
+    for (const t of grantTargets(battle, it)) {
+      const got = add(t, g2, it);
+      if (got) grants.push(got);
+    }
+  }
+  const by = /* @__PURE__ */ new Map();
+  for (const it of all) {
+    let arr = by.get(it.key);
+    if (!arr) {
+      arr = [];
+      by.set(it.key, arr);
+    }
+    arr.push(it);
+  }
+  for (const [key, list] of by) {
+    const inst = INSTALLERS[key];
+    if (inst) inst(battle, list);
+  }
+  installHitMods(battle, by);
+  installReaders(battle, by);
+  if (grants.length) {
+    battle.on("battleStart", () => {
+      for (const it of grants) fxOn(battle, "garrisonGrant", it.unit, `gar:${it.grantedBy.gid}`, it.gid, { from: it.grantedBy.unit.id });
+    });
+  }
+  BONUS.set(battle, by);
+}
+function garrisonBonus(battle, pid, key, bbKey) {
+  const by = BONUS.get(battle);
+  if (!by) return 0;
+  let sum = 0;
+  for (const it of by.get(key) ?? []) {
+    if (!it.active) continue;
+    if (it.unit.ownerId !== pid) continue;
+    sum += num5(it.bb[bbKey], 0);
+  }
+  return sum;
+}
+function opsOf(battle, pid) {
+  const out = [];
+  for (const u of battle.allyUnits) if (isOp(u) && u.ownerId === pid && !u.removed) out.push(u);
+  return out;
+}
+function opAtHome(battle, pid, r, c) {
+  for (const u of battle.allyUnits) if (isOp(u) && u.ownerId === pid && !u.removed && u.homeR === r && u.homeC === c) return u;
+  return null;
+}
+function grantTargets(battle, it) {
+  const u = it.unit;
+  const desc = it.g.desc || "";
+  const need = it.bbStr.check_bond_id || null;
+  const ok = (t) => !!t && (!need || isMember(battle, t, need));
+  const front = () => {
+    const [fr, fc] = frontOf(u.homeR, u.homeC, u.dir);
+    return opAtHome(battle, u.ownerId, fr, fc);
+  };
+  if (desc.includes("\u6240\u6709")) return opsOf(battle, u.ownerId).filter(ok);
+  if (desc.includes("\u540C\u4E00\u884C\u6700\u53F3\u8FB9")) {
+    let best = null;
+    for (const t of opsOf(battle, u.ownerId)) {
+      if (t.homeR !== u.homeR) continue;
+      const col = (x) => x.player && x.player.mirror ? -x.homeC : x.homeC;
+      if (!best || col(t) > col(best)) best = t;
+    }
+    return ok(best) ? [best] : [];
+  }
+  const out = [];
+  if (desc.includes("\u81EA\u8EAB\u548C\u8EAB\u524D") && ok(u)) out.push(u);
+  const f = front();
+  if (ok(f)) out.push(f);
+  return out;
+}
+function targetBonds(battle, it) {
+  const u = it.unit;
+  switch (it.bbStr.bond_type) {
+    case "bond_self":
+      return unitBonds(u).filter((b) => bondActive(battle, u.ownerId, b));
+    case "bond_actived_maxstack": {
+      const b = topActiveBond(battle, u.ownerId);
+      return b ? [b] : EMPTY2;
+    }
+    default:
+      return ids(it.bbStr.bond_id);
+  }
+}
+function amountOf(battle, it) {
+  const bb = it.bb;
+  switch (it.bbStr.bond_add_type) {
+    case "by_charcount_samerow":
+      return rowMates(battle, it.unit).length * num5(bb.bond_add_count_multi, num5(bb.bond_add_count, 1));
+    case "by_charlevel":
+      return tierOf(it.unit) * num5(bb.bond_add_count, 1);
+    default:
+      return num5(bb.bond_add_count, 0);
+  }
+}
+function conditionMet(battle, it) {
+  const ck = it.bbStr.conditionkey;
+  const need = num5(it.bb.check_count, 0);
+  if (ck === "character_same_row") return rowMates(battle, it.unit).length >= need;
+  if (ck === "character_same_col") {
+    let n = 0;
+    for (const a of battle.allyUnits) if (isOp(a) && a.ownerId === it.unit.ownerId && onField(a) && a.tileC === it.unit.tileC) n++;
+    return n >= need;
+  }
+  return true;
+}
+function capOf(battle, it) {
+  const bondId = it.bb.cap_by_bond;
+  if (!bondId) return it.cap;
+  const elite = !!(it.unit.def && it.unit.def.raw && it.unit.def.raw.isGolden);
+  const min = elite ? num5(it.bb.cap_min_elite, num5(it.bb.cap_min, 3)) : num5(it.bb.cap_min, 3);
+  return Math.max(min, bondMembers(battle, it.unit.ownerId, bondId, { fieldOnly: true }).length);
+}
+function bondCapOf(it) {
+  const cap = num5(it.bb.bond_layer_per_round_max, 0);
+  const key = it.bbStr.bond_layer_cap_key;
+  if (!(cap > 0) || typeof key !== "string" || !key) return null;
+  return { cap, key };
+}
+function fireGain(battle, it) {
+  if (!conditionMet(battle, it)) return 0;
+  const bonds = targetBonds(battle, it);
+  if (!bonds.length) return 0;
+  let n = amountOf(battle, it);
+  const whole = it.bbStr.bond_type === "bond_actived_maxstack" && Number.isFinite(it.cap);
+  if (whole) {
+    n = Math.min(Math.floor(n), Math.max(0, Math.floor(it.cap) - (it.wholeUsed ?? 0)));
+    if (!(n > 0)) return 0;
+  }
+  const shared = whole ? null : bondCapOf(it);
+  const added = gainLayers(battle, {
+    playerId: it.unit.ownerId,
+    bonds,
+    n,
+    requireActive: true,
+    source: it.unit,
+    reason: "garrison",
+    cap: whole ? Infinity : shared ? shared.cap : capOf(battle, it),
+    capKey: whole ? null : shared ? shared.key : it.capKey
+  });
+  if (whole && added > 0) it.wholeUsed = (it.wholeUsed ?? 0) + n;
+  if (added > 0) fxOn(battle, "garrison", it.unit, `gar:${it.gid}`, it.key, { n: added });
+  return added;
+}
+var byUnit = (list) => {
+  const m = /* @__PURE__ */ new Map();
+  for (const it of list) {
+    let a = m.get(it.unit);
+    if (!a) {
+      a = [];
+      m.set(it.unit, a);
+    }
+    a.push(it);
+  }
+  return m;
+};
+function isFrontOf(holder, u) {
+  if (!u || u === holder || u.ownerId !== holder.ownerId || !onField(u)) return false;
+  const [fr, fc] = frontOf(holder.tileR, holder.tileC, holder.dir);
+  return u.tileR === fr && u.tileC === fc;
+}
+function sourceInFront(holder, u, tile) {
+  if (!u || u === holder || u.ownerId !== holder.ownerId || !isOp(u) || !Array.isArray(tile)) return false;
+  const [fr, fc] = frontOf(holder.tileR, holder.tileC, holder.dir);
+  return tile[0] === fr && tile[1] === fc;
+}
+function ammoScope(it, u) {
+  const h = it.unit;
+  switch (it.bbStr.range_id) {
+    case "1-1":
+      return onField(h) && isFrontOf(h, u);
+    case "x-5":
+      return u === h || onField(h) && onField(u) && u.ownerId === h.ownerId && isOp(u) && Math.abs(u.tileR - h.tileR) + Math.abs(u.tileC - h.tileC) === 1;
+    default:
+      return u === h;
+  }
+}
+function altSkillsOf(u) {
+  const m = u.kit?.skills;
+  return m && typeof m === "object" ? m : null;
+}
+function levitateCast(u, skill) {
+  if (specAppliesLevitate(skill?.spec)) return true;
+  const id = skill?.id;
+  return !!(id && specAppliesLevitate(altSkillsOf(u)?.[id]));
+}
+function specAppliesLevitate(spec) {
+  return !!(spec && (spec.levitate === true || spec.flags && spec.flags.levitate));
+}
+var INSTALLERS = {
+  act1autochess_gar_event_useskill(battle, list) {
+    const m = byUnit(list);
+    battle.on("skillStart", ({ unit }) => {
+      const arr = m.get(unit);
+      if (arr) for (const it of arr) fireGain(battle, it);
+    });
+  },
+  act1autochess_gar_event_selfkillenemy(battle, list) {
+    const m = byUnit(list);
+    for (const it of list) it.allies = /我方干员/.test(it.g.desc || "");
+    battle.on("kill", ({ killer, victim }) => {
+      const arr = killer ? m.get(killer) : null;
+      if (!arr || !victim) return;
+      for (const it of arr) {
+        if (!(victim.side === "enemy" || it.allies && victim.side === "ally" && victim.kind === "op")) continue;
+        it.cnt++;
+        if (it.cnt % Math.max(1, num5(it.bb.check_cnt, 1)) === 0) fireGain(battle, it);
+      }
+    });
+  },
+  act1autochess_gar_event_selfdead(battle, list) {
+    const m = byUnit(list);
+    battle.on("death", ({ unit, reason }) => {
+      if (reason !== "killed") return;
+      const arr = m.get(unit);
+      if (arr) for (const it of arr) fireGain(battle, it);
+    });
+    const swaps = list.filter((it) => /替身/.test(it.g.desc || ""));
+    if (!swaps.length) return;
+    for (const it of swaps) it.doll = false;
+    battle.on("tick", () => {
+      for (let i = 0; i < swaps.length; i++) {
+        const it = swaps[i];
+        const u = it.unit;
+        const doll = !!(u.trait && u.trait.doll);
+        if (doll === it.doll) continue;
+        it.doll = doll;
+        if (u.alive && u.deployed) fireGain(battle, it);
+      }
+    });
+  },
+  act1autochess_gar_event_consume_ammo(battle, list) {
+    battle.on("ammoUsed", ({ unit }) => {
+      if (!unit) return;
+      for (let i = 0; i < list.length; i++) {
+        const it = list[i];
+        if (!ammoScope(it, unit)) continue;
+        it.cnt++;
+        if (it.cnt % Math.max(1, num5(it.bb.consume_count, 1)) === 0) fireGain(battle, it);
+      }
+    });
+  },
+  act1autochess_gar_event_enemy_abflag_inrange(battle, list) {
+    const watched = new Set(list.map((it) => AB_FLAG_STATUS[num5(it.bb.check_ab_flag, 16)] ?? "freeze"));
+    battle.on("statusApplied", ({ target, status, entered }) => {
+      if (!target || !watched.has(status) || !entered || target.side !== "enemy") return;
+      for (const it of list) {
+        if (status !== (AB_FLAG_STATUS[num5(it.bb.check_ab_flag, 16)] ?? "freeze")) continue;
+        if (!onField(it.unit) || !inRange(it.unit, target)) continue;
+        if (battle.rng() < num5(it.bb.prob, 1)) fireGain(battle, it);
+      }
+    });
+  },
+  act2autochess_gar_event_onstart(battle, list) {
+    const m = byUnit(list);
+    battle.on("deploy", ({ unit }) => {
+      const arr = m.get(unit);
+      if (arr) for (const it of arr) fireGain(battle, it);
+    });
+    const farTooth = byUnit(list.filter((it) => it.gid === "garrison_108_a" || it.gid === "garrison_108_b"));
+    if (farTooth.size) battle.on("dollSwap", ({ unit }) => {
+      const arr = farTooth.get(unit);
+      if (arr) for (const it of arr) fireGain(battle, it);
+    });
+  },
+  act2autochess_gar_event_allyenemy_sleepstun_inrange(battle, list) {
+    battle.on("statusApplied", ({ target, status, entered }) => {
+      if (!target || status !== "sleep" && status !== "stun" || !entered) return;
+      if (!(target.side === "enemy" || target.side === "ally" && target.kind === "op")) return;
+      for (const it of list) if (onField(it.unit) && inRange(it.unit, target)) fireGain(battle, it);
+    });
+  },
+  /**
+   * 予愿安洁莉娜 "己方任意干员起飞时（含自身），使已激活的【叙拉古】【迅捷】层数各+1": 起飞 is the skill flag
+   * `liftoff` of the airborne allies (蒂比 / 予愿安洁莉娜's skills, gamedata_const ba.liftoff) — the engine has no 起飞
+   * event, the flag is read off `u.s.flags.liftoff` and polled here: a false → true change is one take-off (the take-off
+   * of a unit already listed at install time counts too: previous = false).
+   */
+  MOD_TRIGGER_ally_liftoff(battle, list) {
+    const prev = /* @__PURE__ */ new Map();
+    battle.on("tick", () => {
+      for (const u of battle.allyUnits) {
+        const air = !!(u.s.flags.liftoff && u.alive && u.deployed);
+        if (air === (prev.get(u) ?? false)) continue;
+        prev.set(u, air);
+        if (air) for (const it of list) fireGain(battle, it);
+      }
+    });
+  },
+  /**
+   * 岳羽由加莉 "自身及前方一名干员的攻击范围内，敌人被停顿、束缚或击晕时，有 50% 概率使【SEES】层数+1；
+   * 每回合最多由此获得 10 层"（用户原话，逐字见 docs/TASKS-SEES.md §0）。
+   *
+   * 触发用引擎**现成的** `statusApplied` 事件（`server/sim/battle/status.js:231`），`entered` 才表示「目标此前
+   * 没有该状态」—— 只认它，否则「延长已有状态」会重复计层。控制状态键：停顿 `sluggish` / 束缚 `bind` /
+   * 击晕 `stun`（与 `sees.js` 的 `CONTROL_STATUSES` 同一组）。
+   *
+   * 范围 = 持有者本人 **+ 她正前方一格上的干员**（用户原话「自身及前方一名干员」）两者的攻击范围并集；
+   * 「范围」判定照 kits 的 `inRange`：`bodyInKeys(target, unit.rangeKeySet)`。
+   * 概率 `bb.prob`、每回合上限 `bb.cap_min`（走 `fireGain` 的 cap / capKey —— 与结城理那条同样的机制）。
+   */
+  act1autochess_gar_event_statusctrl(battle, list) {
+    const CONTROL = ["sluggish", "bind", "stun"];
+    const inRange2 = (u, e) => !!u && !!u.rangeKeySet && bodyInKeys(e, u.rangeKeySet);
+    const watchersOf = (it) => {
+      const out = [it.unit];
+      const [fr, fc] = frontOf(it.unit.tileR, it.unit.tileC, it.unit.dir);
+      for (const a of battle.allyUnits) {
+        if (!a || a === it.unit || a.side !== "ally" || !a.alive || !a.deployed) continue;
+        if (a.ownerId !== it.unit.ownerId) continue;
+        for (const k of bodyKeys(a)) if (Math.floor(k / 21) === fr && k % 21 === fc) return [...out, a];
+      }
+      return out;
+    };
+    battle.on("statusApplied", (c) => {
+      const t = c.target;
+      if (!t || t.side !== "enemy" || !t.alive) return;
+      if (!CONTROL.includes(c.status)) return;
+      if (c.entered === false) return;
+      for (const it of list) {
+        if (!onField(it.unit)) continue;
+        if (!watchersOf(it).some((w) => inRange2(w, t))) continue;
+        if (!(battle.rng() < num5(it.bb.prob, 0.5))) continue;
+        it.cnt++;
+        fireGain(battle, it);
+      }
+    });
+  },
+  /**
+   * 结城理 "自身在场时，'总攻击'造成的攻击力提升 20%"（用户原话）。
+   *
+   * 这不是叠层，而是 `addon/sees.js` 里「总攻击」的**乘区**。所以这条驻防不调 `fireGain`：它在 install 时把
+   * 「持有者在场」这一事实登记成 `it.active`（`tick` 上维护，与 `MOD_TRIGGER_ally_liftoff` 同一套轮询写法），
+   * 由 `sees.js` 通过 `garrisonBonus(battle, pid, '…alloutBonus')` 读回。
+   * 这样「加成写在干员驻防里」与「总攻击实现在盟约 addon 里」不重复实现同一件事。
+   */
+  act1autochess_gar_eff_alloutBonus(battle, list) {
+    const refresh = () => {
+      for (const it of list) it.active = !!(it.unit.alive && it.unit.deployed);
+    };
+    refresh();
+    battle.on("tick", refresh);
+  },
+  /**
+   * 予愿安洁莉娜 "每次释放可施加浮空的技能时，使已激活的【远见】层数+1": the cast itself is the trigger (skillStart),
+   * the condition is that the cast skill can apply 浮空. A kit declares that with the skill flag `levitate` on the spec
+   * (tier3 予愿安洁莉娜 S2 重力自定义) — the same spec-flag route as 起飞. The keys are marked so that a skill spec of
+   * the very chess carrying the garrison (its own take-off flag) can never satisfy the check by accident.
+   */
+  MOD_TRIGGER_levitate_skill_cast(battle, list) {
+    const m = byUnit(list);
+    battle.on("skillStart", ({ unit, skill }) => {
+      const arr = m.get(unit);
+      if (!arr || !levitateCast(unit, skill)) return;
+      for (const it of arr) if (onField(it.unit)) fireGain(battle, it);
+    });
+  },
+  act1autochess_gar_event_addition_cnt(battle, list) {
+    battle.on("layerGain", (ctx) => {
+      if (ctx.reason !== "garrison" || !ctx.source) return;
+      for (const it of list) {
+        const h = it.unit;
+        if (h.ownerId !== ctx.playerId || !onField(h)) continue;
+        if (it.bbStr.range_id && it.bbStr.range_id !== "1-1") continue;
+        if (sourceInFront(h, ctx.source, ctx.tile)) ctx.n += num5(it.bb.extra_cnt, 0);
+      }
+    });
+  },
+  GAIN_BUFF(battle, list) {
+    for (const it of list) {
+      const mods = {};
+      if (num5(it.bb.atk, 0) > 0) mods.atkMul = num5(it.bb.atk);
+      if (num5(it.bb.max_hp, 0) > 0) mods.hpMul = num5(it.bb.max_hp);
+      if (num5(it.bb.def, 0) > 0) mods.defMul = num5(it.bb.def);
+      passiveBuff(battle, it.unit, `gar:${it.gid}`, mods);
+    }
+  },
+  attr_common_global_buff(battle, list) {
+    for (const it of list) {
+      const mods = {};
+      if (num5(it.bb.sp_recovery_per_sec, 0)) mods.spRecoveryFlat = num5(it.bb.sp_recovery_per_sec);
+      Object.assign(mods, directMods({ atk: num5(it.bb.atk, 0), hp: num5(it.bb.max_hp, 0) }));
+      if (num5(it.bb.attack_speed, 0)) mods.aspd = num5(it.bb.attack_speed);
+      passiveBuff(battle, it.unit, `gar:${it.gid}`, mods);
+    }
+  },
+  // grants are resolved in install(); 风丸's rule lives in the prep economy
+  ADD_BOND() {
+  },
+  NONE() {
+  }
+};
+var READERS = /* @__PURE__ */ new Set([
+  "act1autochess_gar_eff_attrByBond",
+  "act1autochess_gar_eff_respawnTimeByBond",
+  "act2autochess_gar_eff_attrByBond_add_onstart",
+  "act2autochess_gar_eff_ab_damageScaleByBond"
+]);
+function stepsOf(battle, it) {
+  const div = Math.max(1, num5(it.bb.divide_num, 1));
+  let sum = 0;
+  for (const b of it.bonds ?? (it.bonds = ids(it.bbStr.bond_id))) if (bondActive(battle, it.unit.ownerId, b)) sum += bondLayers(battle, it.unit.ownerId, b);
+  return Math.floor(sum / div);
+}
+function attrMods(bb, k) {
+  const m = directMods({ atk: num5(bb.atk, 0) * k, hp: num5(bb.max_hp, 0) * k, def: num5(bb.def, 0) * k });
+  if (num5(bb.attack_speed, 0)) {
+    let v = num5(bb.attack_speed) * k;
+    const cap = 100 * num5(bb.max_attack_speed, 0);
+    if (cap > 0) v = Math.min(cap, v);
+    m.aspd = v;
+  }
+  if (num5(bb.hp_recovery_per_sec, 0)) m.hpRegen = num5(bb.hp_recovery_per_sec) * k;
+  if (num5(bb.sp_recovery_per_sec, 0)) m.spRecoveryFlat = num5(bb.sp_recovery_per_sec) * k;
+  return m;
+}
+function applyReader(battle, it) {
+  const k = stepsOf(battle, it);
+  if (k === it.k) return;
+  it.k = k;
+  const u = it.unit;
+  const key = `gar:${it.gid}`;
+  switch (it.key) {
+    case "act1autochess_gar_eff_attrByBond":
+      if (k > 0) passiveBuff(battle, u, key, attrMods(it.bb, k));
+      else battle.removeBuff(u, key);
+      break;
+    case "act1autochess_gar_eff_respawnTimeByBond":
+      if (k > 0) passiveBuff(battle, u, key, { redeployMul: Math.max(0, 1 + num5(it.bb.respawn_time, 0) * k) });
+      else battle.removeBuff(u, key);
+      break;
+    case "act2autochess_gar_eff_attrByBond_add_onstart": {
+      const b = u.findBuff(key);
+      if (b && b.timeLeft > 0) onstartBuff(battle, it, b.timeLeft);
+      break;
+    }
+    default:
+      break;
+  }
+}
+function onstartBuff(battle, it, duration) {
+  const k = Math.max(0, it.k);
+  const key = `gar:${it.gid}`;
+  if (!(k > 0) || !(duration > 0)) {
+    battle.removeBuff(it.unit, key);
+    return;
+  }
+  battle.addBuff(it.unit, { key, duration, refresh: "replace", mods: { atkFlat: num5(it.bb.atk, 0) * k, hpFlat: num5(it.bb.max_hp, 0) * k } });
+}
+function installReaders(battle, by) {
+  const list = [];
+  for (const key of READERS) for (const it of by.get(key) ?? EMPTY2) list.push(it);
+  if (!list.length) return;
+  const recompute = () => {
+    for (const it of list) applyReader(battle, it);
+  };
+  recompute();
+  let pending = false;
+  battle.on("layerGain", () => {
+    if (pending) return;
+    pending = true;
+    battle.after(0, () => {
+      pending = false;
+      recompute();
+    });
+  });
+  const onstart = by.get("act2autochess_gar_eff_attrByBond_add_onstart");
+  if (onstart) {
+    const m = byUnit(onstart);
+    battle.on("deploy", ({ unit }) => {
+      const arr = m.get(unit);
+      if (!arr) return;
+      for (const it of arr) {
+        it.k = stepsOf(battle, it);
+        onstartBuff(battle, it, num5(it.bb.duration, 0));
+      }
+    });
+  }
+}
+function weaknessType(source, target, dmg) {
+  const ss = source && source.s ? source.s : null;
+  const ign = {
+    defIgnorePct: num5(dmg.defIgnorePct, 0) + (ss ? num5(ss.defIgnorePct, 0) : 0),
+    defIgnoreFlat: num5(dmg.defIgnoreFlat, 0) + (ss ? num5(ss.defIgnoreFlat, 0) : 0),
+    resIgnorePct: num5(dmg.resIgnorePct, 0) + (ss ? num5(ss.resIgnorePct, 0) : 0),
+    resIgnoreFlat: num5(dmg.resIgnoreFlat, 0) + (ss ? num5(ss.resIgnoreFlat, 0) : 0)
+  };
+  const ph = mitigate(dmg.amount, "phys", target.s, ign) * (ss ? num5(ss.physDealtMul, 1) : 1) * num5(target.s.physTakenMul, 1);
+  const ar = mitigate(dmg.amount, "arts", target.s, ign) * (ss ? num5(ss.artsDealtMul, 1) : 1) * num5(target.s.artsTakenMul, 1);
+  if (ar > ph + 1e-9) return "arts";
+  if (ph > ar + 1e-9) return "phys";
+  return dmg.type;
+}
+var bound = (t) => !!(t.s && t.s.flags && t.s.flags.bind) || !!t.findBuff("bind");
+var WEAKNESS_PRIORITY = -10;
+function installHitMods(battle, by) {
+  const m = /* @__PURE__ */ new Map();
+  const push = (it, kind) => {
+    let a = m.get(it.unit);
+    if (!a) {
+      a = [];
+      m.set(it.unit, a);
+    }
+    a.push({ it, kind });
+  };
+  for (const it of by.get("act1autochess_gar_eff_attack_enemy") ?? EMPTY2) push(it, "tag");
+  for (const it of by.get("act2autochess_gar_eff_ab_damageScaleByBond") ?? EMPTY2) push(it, "ab");
+  if (m.size) {
+    battle.on("hit", ({ source, target, dmg }) => {
+      const arr = source ? m.get(source) : null;
+      if (!arr || !target || target.side !== "enemy" || !dmg || dmg.type === "element") return;
+      for (let i = 0; i < arr.length; i++) {
+        const { it, kind } = arr[i];
+        if (kind === "tag") {
+          if (Array.isArray(dmg.tags) && dmg.tags.includes("dot")) continue;
+          const tags = target.def && target.def.tags;
+          if (Array.isArray(tags) && tags.includes(it.bbStr.check_tag)) dmg.amount *= num5(it.bb.atk, 1);
+        } else if (it.k > 0) {
+          const hit = num5(it.bb.check_ab_flag, 0) && bound(target) || num5(it.bb.check_sluggish, 0) && !!target.findBuff("sluggish");
+          if (hit) dmg.mul = num5(dmg.mul, 1) * (1 + num5(it.bb.damage_scale_per_stack, 0) * it.k);
+        }
+      }
+    });
+  }
+  const chaos = new Set((by.get("act1autochess_gar_eff_chaos") ?? EMPTY2).map((it) => it.unit));
+  if (chaos.size) {
+    battle.on("hit", ({ source, target, dmg }) => {
+      if (!source || !chaos.has(source) || !target || target.side !== "enemy" || !dmg) return;
+      if (dmg.type === "phys" || dmg.type === "arts") dmg.type = weaknessType(source, target, dmg);
+    }, { priority: WEAKNESS_PRIORITY });
+  }
+}
+
+// mods/marisa-native/source/server/sim/content/bonds/addon/sees.js
+var BOND3 = "bond_x_marisa_seesShip";
+var MOD_KEY3 = "MOD_bond_sees";
+var KEY3 = "bond:bond_x_marisa_seesShip";
+var DEFAULTS2 = Object.freeze({
+  scale_first_kill: 2,
+  scale_first_kill_max: 3,
+  aspd_per_step: 0.01,
+  aspd_step: 10,
+  aspd_cap: 2,
+  yukari_prob: 0.5,
+  yukari_round_cap: 10,
+  makoto_allout_bonus: 0.2,
+  ctrl_prob_base: 0.1,
+  ctrl_prob_per_layer: 2e-3,
+  ctrl_sluggish_sec: 2,
+  ctrl_sp: 1,
+  ctrl_cd_sec: 5,
+  allout_atk_base: 2,
+  allout_atk_per_layer: 0.05,
+  allout_cd_sec: 30,
+  shinko_gauge_max: 100,
+  shinko_atk_base: 1,
+  shinko_atk_per_layer: 0.03
+});
+var CONTROL_STATUSES = Object.freeze(["sluggish", "bind", "stun"]);
+var seesBb = () => buffParams(bondRecord(BOND3), MOD_KEY3) ?? {};
+function installSees(battle) {
+  if (!battle || !Array.isArray(battle.players) || !battle.players.length) return;
+  const pids = /* @__PURE__ */ new Set();
+  for (const ps of battle.players) if (bondActive(battle, ps.playerId, BOND3)) pids.add(ps.playerId);
+  if (!pids.size) return;
+  const bb = seesBb();
+  const ctrlBase = num5(bb.ctrl_prob_base, DEFAULTS2.ctrl_prob_base);
+  const ctrlPer = num5(bb.ctrl_prob_per_layer, DEFAULTS2.ctrl_prob_per_layer);
+  const ctrlSec = num5(bb.ctrl_sluggish_sec, DEFAULTS2.ctrl_sluggish_sec);
+  const ctrlSp = num5(bb.ctrl_sp, DEFAULTS2.ctrl_sp);
+  const ctrlCd = num5(bb.ctrl_cd_sec, DEFAULTS2.ctrl_cd_sec);
+  const alloutBase = num5(bb.allout_atk_base, DEFAULTS2.allout_atk_base);
+  const alloutPer = num5(bb.allout_atk_per_layer, DEFAULTS2.allout_atk_per_layer);
+  const alloutCd = num5(bb.allout_cd_sec, DEFAULTS2.allout_cd_sec);
+  const gaugeMax = 100 * num5(bb.shinko_gauge_max, DEFAULTS2.shinko_gauge_max / 100);
+  const shinkoBase = num5(bb.shinko_atk_base, DEFAULTS2.shinko_atk_base);
+  const shinkoPer = num5(bb.shinko_atk_per_layer, DEFAULTS2.shinko_atk_per_layer);
+  const mine = (u, pid) => !!u && isOp(u) && u.ownerId === pid && isMember(battle, u, BOND3);
+  const layersOf = (pid) => Math.max(0, num5(bondLayers(battle, pid, BOND3), 0));
+  const perBattle = (key, init) => battleStore(battle, `sees:${key}`, init);
+  const TIER3 = 1;
+  const WEIGHT_MAX = 3;
+  battle.on("hit", (c) => {
+    const u = c.source;
+    const t = c.target;
+    if (!t || t.side !== "enemy" || !t.alive) return;
+    if (!u || !pids.has(u.ownerId) || !mine(u, u.ownerId)) return;
+    if (bondTier(battle, u.ownerId, BOND3) < TIER3) return;
+    if (!(num5(t.weight, 99) <= WEIGHT_MAX)) return;
+    const last = num5(u.mem?.seesCtrlAt, -Infinity);
+    if (battle.time - last < ctrlCd) return;
+    const L3 = layersOf(u.ownerId);
+    const p = ctrlBase + ctrlPer * L3;
+    if (!battle.rng.chance(p)) return;
+    u.mem.seesCtrlAt = battle.time;
+    battle.applyStatus(t, "sluggish", { duration: ctrlSec, source: u });
+    if (ctrlSp > 0 && u.skill) u.skill.gainSp(ctrlSp, "bond");
+    fxOn(battle, "bondProc", u, KEY3, "ctrl", { n: ctrlSp });
+  });
+  const TIER6 = 2;
+  const allControlled = () => {
+    const foes = battle.enemies.filter((e) => e.alive && e.deployed);
+    if (!foes.length) return false;
+    for (const e of foes) {
+      const f = e.s?.flags || {};
+      if (!(f.sluggish || f.bind || f.stun)) return false;
+    }
+    return true;
+  };
+  const makotoBonusOf = (pid) => {
+    const fromGarrison = garrisonBonus(battle, pid, ALLOUT_BONUS_KEY, "allout_bonus");
+    if (fromGarrison > 0) return fromGarrison;
+    return 0;
+  };
+  battle.on("hit", (c) => {
+    const u = c.source;
+    const t = c.target;
+    if (!u || !t || t.side !== "enemy") return;
+    if (!pids.has(u.ownerId) || !mine(u, u.ownerId)) return;
+    if (bondTier(battle, u.ownerId, BOND3) < TIER6) return;
+    if (!allControlled()) return;
+    const last = num5(u.mem?.seesAlloutAt, -Infinity);
+    if (battle.time - last < alloutCd) return;
+    u.mem.seesAlloutAt = battle.time;
+    const L3 = layersOf(u.ownerId);
+    const scale = alloutBase + alloutPer * L3;
+    const bonus = 1 + makotoBonusOf(u.ownerId);
+    for (const e of battle.enemies.filter((x) => x.alive)) {
+      battle.dealDamage(u, e, battle.makeDamage({
+        amount: u.s.atk * scale * bonus,
+        type: "phys",
+        isSplash: true,
+        tags: ["allout"]
+      }));
+    }
+    for (const e of battle.enemies.filter((x) => x.alive)) {
+      for (const s of CONTROL_STATUSES) battle.removeBuff(e, s);
+    }
+    fxOn(battle, "bondProc", u, KEY3, "allout", { n: scale });
+  });
+  const gaugeStore = () => perBattle("shinkoGauge", () => /* @__PURE__ */ new Map());
+  const usedStore = () => perBattle("shinkoUsed", () => /* @__PURE__ */ new Set());
+  const addGauge = (u, n) => {
+    if (!u || !(n > 0) || !pids.has(u.ownerId) || !mine(u, u.ownerId)) return;
+    if (bondTier(battle, u.ownerId, BOND3) < TIER6) return;
+    const g = gaugeStore();
+    const cur = num5(g.get(u.id), 0);
+    if (cur >= gaugeMax) return;
+    g.set(u.id, Math.min(gaugeMax, cur + n));
+  };
+  battle.on("damaged", (c) => {
+    if (c.source && c.amount > 0) addGauge(c.source, 1);
+  });
+  battle.on("heal", (c) => {
+    addGauge(c.source, 1);
+  });
+  battle.on("layerGain", (c) => {
+    if (c.bondId === BOND3) addGauge(c.source, 1);
+  }, { priority: -200 });
+  battle.on("skillStart", (c) => {
+    const u = c.unit;
+    if (!u || !pids.has(u.ownerId) || !mine(u, u.ownerId)) return;
+    if (bondTier(battle, u.ownerId, BOND3) < TIER6) return;
+    if (num5(gaugeStore().get(u.id), 0) < gaugeMax) return;
+    if (usedStore().has(u.id)) return;
+    u.mem.shinkoReady = true;
+  });
+  battle.on("hit", (c) => {
+    const u = c.source;
+    const t = c.target;
+    if (!u || !t || t.side !== "enemy" || !t.alive) return;
+    if (!u.mem?.shinkoReady) return;
+    if (!pids.has(u.ownerId) || usedStore().has(u.id)) return;
+    u.mem.shinkoReady = false;
+    usedStore().add(u.id);
+    const L3 = layersOf(u.ownerId);
+    const scale = shinkoBase + shinkoPer * L3;
+    battle.dealDamage(u, t, battle.makeDamage({
+      amount: u.s.atk * scale,
+      type: "true",
+      tags: ["shinko"]
+    }));
+    fxOn(battle, "bondProc", u, KEY3, "shinko", { n: scale });
+  });
+}
+
+// mods/marisa-native/source/server/sim/content/bonds/addon/battle.js
+var ID = Object.freeze({ rhode: "bond_x_marisa_rhodeShip", sees: "bond_x_marisa_seesShip", unite: "bond_x_marisa_uniteShip" });
+var KEY4 = Object.freeze({
+  preci: "bond:preciShip",
+  stead: "bond:steadShip",
+  deput: "bond:deputShip",
+  skillful: "bond:skillfulShip",
+  raid: "bond:raidShip",
+  raidAspd: "bond:raidShip:aspd",
+  empty: "bond:emptyShip",
+  emptyDmg: "bond:emptyShip:dmg",
+  solo: "bond:soloShip",
+  sunt: "bond:suntShip",
+  arcane: "bond:arcaneShip",
+  // 罗德岛's keys, implemented in addon/rhode.js (same values — the tests read them through this object).
+  rhodeHeal: "bond:bond_x_marisa_rhodeShip:heal",
+  rhodeAtk: "bond:bond_x_marisa_rhodeShip:overflow"
+});
+var RHODE_MOD_KEY = MOD_KEY2;
+var BB_KEY = Object.freeze({ [ID.rhode]: RHODE_MOD_KEY, [ID.unite]: MOD_KEY, [ID.sees]: MOD_KEY3 });
+var LAYERED = /* @__PURE__ */ new Set([ID.preci, ID.swift, ID.skillful, ID.arcane, ID.stead, ID.deput, ID.raid, ID.indom, ID.rhode, ID.unite]);
+var STEAD_CD = "bond:steadShip:cd";
+var AURA_POLL = 0.25;
+var RAID_POLL = 0.25;
+var RAID_SEARCH = 2;
+var RAID_TARGETS = 8;
+var arcaneMods = (v) => ({ artsTakenMul: v });
+function bondBb(bondId) {
+  return buffParams(bondRecord(bondId), "env_gbuff_new") ?? {};
+}
+var procChance = (bb, L3) => Math.max(0, Math.min(1, num5(bb.base_prob) + num5(bb.prob_per_stack) * L3));
+var prob = procChance;
+function makeState(battle, p) {
+  const pid = p.playerId;
+  const ops = playerOps(battle, pid);
+  const st = { pid, ops, tiers: {}, bb: {}, members: {} };
+  for (const id of Object.values(ID)) {
+    const t = bondTier(battle, pid, id);
+    if (t <= 0) continue;
+    st.tiers[id] = t;
+    st.bb[id] = BB_KEY[id] ? buffParams(bondRecord(id), BB_KEY[id]) ?? {} : bondBb(id);
+    st.members[id] = new Set(ops.filter((u) => isMember(battle, u, id)));
+  }
+  return st;
+}
+var L2 = (battle, st, id) => bondLayers(battle, st.pid, id);
+function applyPassives(battle, st) {
+  const t = st.tiers;
+  if (t[ID.preci]) {
+    const bb = st.bb[ID.preci];
+    const wide = t[ID.preci] >= 2;
+    const mods = directMods({ atk: num5(bb.base_atk) + num5(bb.atk_per_stack) * L2(battle, st, ID.preci) });
+    if (wide) {
+      mods.defIgnorePct = num5(bb.power_def_penetrate);
+      mods.resIgnorePct = num5(bb.power_magic_resist_penetrate);
+    }
+    for (const u of st.ops) {
+      if (st.members[ID.preci].has(u) || wide && u.def?.position === "RANGED") passiveBuff(battle, u, KEY4.preci, mods);
+    }
+  }
+  if (t[ID.stead]) {
+    const bb = st.bb[ID.stead];
+    const mods = directMods({ hp: num5(bb.base_max_hp) + num5(bb.max_hp_per_stack) * L2(battle, st, ID.stead) });
+    for (const u of st.ops) passiveBuff(battle, u, KEY4.stead, mods);
+  }
+  if (t[ID.deput]) {
+    const bb = st.bb[ID.deput];
+    const mods = directMods({ def: num5(bb.base_def) + num5(bb.def_per_stack) * L2(battle, st, ID.deput) }, { redeployMul: Math.max(0, 1 + num5(bb.respawn_time)) });
+    for (const u of st.ops) passiveBuff(battle, u, KEY4.deput, mods);
+  }
+  if (t[ID.raid]) {
+    const bb = st.bb[ID.raid];
+    const lv = L2(battle, st, ID.raid);
+    const milestone = num5(bb.power_bond_stack_cnt, Infinity);
+    if (lv >= milestone) {
+      const mods = { aspd: num5(bb.power_attack_speed) };
+      for (const u of st.ops) passiveBuff(battle, u, KEY4.raidAspd, mods);
+      if (!st.raidMilestone) {
+        st.raidMilestone = true;
+        for (const u of st.members[ID.raid]) if (onField(u)) {
+          fxOn(battle, "bondMilestone", u, KEY4.raid, "aspd");
+          break;
+        }
+      }
+    }
+    st.raidMods = raidMods(bb, lv);
+    for (const u of st.members[ID.raid]) {
+      const b = u.findBuff(KEY4.raid);
+      if (b) {
+        b.mods = st.raidMods;
+        u.markDirty();
+      }
+    }
+  }
+  if (t[ID.arcane]) {
+    const bb = st.bb[ID.arcane];
+    const m = num5(bb.base_damage_scale, 1) + num5(bb.damage_scale_per_stack) * L2(battle, st, ID.arcane);
+    st.arcaneMul = Math.max(0, m);
+    st.arcaneLowMul = Math.max(0, m * num5(bb.power_weak_scale, 1));
+  }
+  if (t[ID.skillful]) {
+    const bb = st.bb[ID.skillful];
+    const lv = L2(battle, st, ID.skillful);
+    const v = num5(bb.base_attack_speed) + num5(bb.attack_speed_per_stack) * lv;
+    if (!st.auraMods || st.auraMods.aspd !== v) st.auraMods = { aspd: v };
+    st.auraWide = lv >= num5(bb.power_bond_stack_cnt, Infinity);
+  }
+  if (t[ID.rhode]) rhodeApplyPassive(battle, st);
+}
+function raidMods(bb, lv) {
+  const mods = directMods({
+    atk: num5(bb.base_atk) + num5(bb.atk_per_stack) * lv,
+    hp: num5(bb.base_max_hp) + num5(bb.max_hp_per_stack) * lv
+  });
+  const aspd = num5(bb.base_attack_speed) + num5(bb.attack_speed_per_stack) * lv;
+  if (aspd) mods.aspd = aspd;
+  return mods;
+}
+function applyStatic(battle, st) {
+  const t = st.tiers;
+  if (t[ID.empty]) {
+    const bb = st.bb[ID.empty];
+    const taken = Math.max(0, 1 - num5(bb.damage_resistance));
+    for (const u of st.ops) {
+      passiveBuff(battle, u, KEY4.empty, { physTakenMul: taken, artsTakenMul: taken });
+      if (st.members[ID.empty].has(u)) {
+        passiveBuff(battle, u, KEY4.emptyDmg, { dmgDealtMul: num5(isElite(u) ? bb.damage_scale_extra : bb.damage_scale_normal, 1) });
+      }
+    }
+  }
+  if (t[ID.solo]) {
+    const bb = st.bb[ID.solo];
+    const mods = directMods({ atk: num5(bb.atk), hp: num5(bb.max_hp) });
+    for (const u of st.members[ID.solo]) passiveBuff(battle, u, KEY4.solo, mods);
+  }
+  if (t[ID.sunt]) {
+    const bb = st.bb[ID.sunt];
+    const mods = directMods({ atk: num5(bb.power_atk) });
+    for (const u of st.ops) {
+      if (!isElite(u)) continue;
+      passiveBuff(battle, u, KEY4.sunt, mods);
+      if (t[ID.sunt] >= 2) suntSpCost(u, bb);
+    }
+  }
+}
+function suntSpCost(u, bb) {
+  const sk = u && u.skill;
+  if (!sk || sk.noSkill || u.mem[KEY4.sunt]) return;
+  u.mem[KEY4.sunt] = true;
+  sk.spCostMul = sk.spCostMul * num5(bb.sp_ratio, 1);
+}
+function updateAura(battle, st) {
+  const mods = st.auraMods;
+  if (!mods) return;
+  const next = st.auraNext ?? (st.auraNext = /* @__PURE__ */ new Set());
+  next.clear();
+  const offs = st.auraWide ? N8 : N4;
+  for (const m of st.members[ID.skillful]) {
+    const active = onField(m);
+    if (!active && (m.removeReason !== "killed" || !battle.isDown(m))) continue;
+    if (active) next.add(m);
+    const [r, c] = active ? [m.tileR, m.tileC] : battle.restTile(m);
+    for (const [dr, dc] of offs) {
+      const a = battle.unitAt(r + dr, c + dc);
+      if (a && a.kind === "op" && a.ownerId === st.pid && onField(a)) next.add(a);
+    }
+  }
+  const cur = st.aura ?? (st.aura = /* @__PURE__ */ new Set());
+  for (const u of cur) if (!next.has(u)) battle.removeBuff(u, KEY4.skillful);
+  for (const u of next) {
+    const b = u.findBuff(KEY4.skillful);
+    if (!b) battle.addBuff(u, { key: KEY4.skillful, mods });
+    else if (b.mods !== mods) {
+      b.mods = mods;
+      u.markDirty();
+    }
+  }
+  st.aura = next;
+  st.auraNext = cur;
 }
 function raidReach(u) {
   const d = normDir(u.dir);
@@ -5219,7 +6837,7 @@ function raidPoll(battle, st) {
       raidRefreshContact(battle, u);
     }
     if (revived && u.blocking.some((e) => e.alive && e.blockedBy === u)) continue;
-    const since = Math.max(u.lastAttackAt ?? -Infinity, u.deployedAt ?? -Infinity, u.mem[KEY.raid] ?? -Infinity);
+    const since = Math.max(u.lastAttackAt ?? -Infinity, u.deployedAt ?? -Infinity, u.mem[KEY4.raid] ?? -Infinity);
     const sk = u.skill;
     const deploySkillOn = !!(sk && sk.active && (sk.kind === "passive" || sk.spType === "none"));
     const ready = !!(sk && !sk.noSkill && (sk.ready && !(sk.active && sk.isTimed) || deploySkillOn));
@@ -5236,10 +6854,10 @@ function raidPoll(battle, st) {
       const res = raidRedeploy(battle, u, tile[0], tile[1]);
       u.mem.raidReviveSeq = 0;
       if (!res) continue;
-      u.mem[KEY.raid] = battle.time;
+      u.mem[KEY4.raid] = battle.time;
       if (res === "raid") {
-        battle.addBuff(u, { key: KEY.raid, mods: st.raidMods });
-        fxOn(battle, "blink", u, KEY.raid, "relocate", { target: list[i].id });
+        battle.addBuff(u, { key: KEY4.raid, mods: st.raidMods });
+        fxOn(battle, "blink", u, KEY4.raid, "relocate", { target: list[i].id });
       }
       break;
     }
@@ -5251,7 +6869,7 @@ function raidRedeploy(battle, u, r, c) {
   if (battle.redeploy(u, { free: true, tile: [r, c], keepSp: true })) return "raid";
   return battle.redeploy(u, { free: true, keepSp: true }) ? "home" : false;
 }
-function install(battle) {
+function install2(battle) {
   if (!battle || !Array.isArray(battle.players) || !battle.players.length) return;
   const states = [];
   for (const p of battle.players) {
@@ -5266,6 +6884,8 @@ function install(battle) {
     applyStatic(battle, st);
   }
   const has = (id, tier = 1) => states.some((st) => (st.tiers[id] ?? 0) >= tier);
+  installUnite(battle);
+  installSees(battle);
   if (states.some((st) => Object.keys(st.tiers).some((id) => LAYERED.has(id)))) {
     battle.on("layerGain", (c) => {
       const st = byPid[c.playerId];
@@ -5278,57 +6898,7 @@ function install(battle) {
       });
     });
   }
-  const rhode = states.filter((st) => st.tiers[ID.rhode]);
-  if (rhode.length) {
-    battle.on("layerGain", (c) => {
-      if (c.bondId === ID.rhode) return;
-      const st = byPid[c.playerId];
-      if (!st || !st.tiers[ID.rhode]) return;
-      rhodeMirror(battle, st, c);
-    }, { priority: -50 });
-    battle.on("layerGain", (c) => {
-      if (c.bondId !== ID.rhode) return;
-      const st = byPid[c.playerId];
-      if (!st || !st.tiers[ID.rhode]) return;
-      const bb = st.bb[ID.rhode] || {};
-      const eff = rhodeEffOf(bb, rhodeFieldCount(st));
-      const total = Math.max(0, num5(st.rhodeFrac, 0)) + Math.max(0, num5(c.n, 0)) * eff;
-      let n = Math.floor(total + 1e-9);
-      st.rhodeFrac = total - n;
-      const room = rhodeLayerCap(battle, st) - L(battle, st, ID.rhode);
-      if (n > room) n = Math.max(0, room);
-      c.n = n;
-    }, { priority: -60 });
-    const rhodePids = new Set(rhode.map((st) => st.pid));
-    const refreshOverflow = (u) => {
-      if (!u || !rhodePids.has(u.ownerId)) return;
-      const buff = u.findBuff(KEY.rhodeAtk);
-      if (buff) rhodeAtkTick({ unit: u, buff });
-    };
-    battle.on("skillEnd", ({ unit }) => refreshOverflow(unit), { priority: -1e3 });
-    battle.on("beforeAttack", ({ attacker }) => refreshOverflow(attacker), { priority: -1e3 });
-    battle.on("tick", () => {
-      for (const st of rhode) for (const u of st.ops) refreshOverflow(u);
-    }, { priority: -1e3 });
-    installRhodeDotCap(battle, (u) => !!(u && u.side === "ally" && u.kind === "op" && rhodePids.has(u.ownerId)), num5(rhode[0].bb[ID.rhode].dot_duration_cap, 5));
-    battle.on("heal", (c) => {
-      const t = c.target;
-      if (!t || t.side !== "ally" || !isOp(t) || !t.alive || !t.deployed) return;
-      const st = byPid[t.ownerId];
-      if (!st || !st.tiers[ID.rhode]) return;
-      if (st.probe === t) st.probeAmt = num5(c.amount, 0);
-      if (st.striking) return;
-      const actual = Math.max(0, Math.min(num5(c.amount, 0), t.s.maxHp - t.hp));
-      if (!(actual > 0)) return;
-      st.striking = true;
-      try {
-        rhodeHealStrike(battle, st, t, actual);
-      } finally {
-        st.striking = false;
-      }
-    }, { priority: -1e3 });
-    for (const st of rhode) if (st.tiers[ID.rhode] >= 2) installRhodeAura(battle, st);
-  }
+  installRhode(battle, states, byPid);
   if (has(ID.skillful)) {
     const aura = states.filter((st) => st.tiers[ID.skillful]);
     const refresh = (pid) => {
@@ -5363,7 +6933,7 @@ function install(battle) {
       const st = byPid[u.ownerId];
       if (!st || !st.tiers[ID.swift]) return;
       const bb = st.bb[ID.swift];
-      const lv = L(battle, st, ID.swift);
+      const lv = L2(battle, st, ID.swift);
       const p = prob(bb, lv);
       let gained = 0;
       if (st.members[ID.swift].has(u) && battle.rng() < p) gained += u.skill.gainSp(num5(bb.normal_sp), "bond");
@@ -5404,7 +6974,7 @@ function install(battle) {
         }
       }
       if (u.alive || u.removed || u.mem[ID.indom] === battle.time) return;
-      if (banked || st && battle.rng() < prob(bb, L(battle, st, ID.indom))) {
+      if (banked || st && battle.rng() < prob(bb, L2(battle, st, ID.indom))) {
         u.mem[ID.indom] = battle.time;
         if (battle.redeploy(u, { free: true })) fxOn(battle, "revive", u, "bond:indomShip", "redeploy");
       }
@@ -5412,7 +6982,7 @@ function install(battle) {
     battle.on("dollSwap", ({ unit: u }) => {
       const st = stOf(u);
       if (!st || !u.alive || u.mem.indomFreeDeploy) return;
-      if (battle.rng() < prob(st.bb[ID.indom], L(battle, st, ID.indom))) u.mem.indomFreeDeploy = true;
+      if (battle.rng() < prob(st.bb[ID.indom], L2(battle, st, ID.indom))) u.mem.indomFreeDeploy = true;
     });
     battle.on("deploy", ({ unit: u }) => {
       if (u && u.mem && u.mem.indomFreeDeploy) u.mem.indomFreeDeploy = false;
@@ -5472,7 +7042,7 @@ function install(battle) {
         t.mem[STEAD_CD] = battle.time;
         const src2 = c.source;
         if (!src2 || src2.side !== "enemy" || !src2.alive) return;
-        const d = battle.makeDamage({ amount: num5(bb2.base_damage_value) + num5(bb2.damage_value_per_stack) * L(battle, st2, ID.stead), type: "arts", canDodge: false, sourceless: true });
+        const d = battle.makeDamage({ amount: num5(bb2.base_damage_value) + num5(bb2.damage_value_per_stack) * L2(battle, st2, ID.stead), type: "arts", canDodge: false, sourceless: true });
         d.steadThorn = true;
         battle.dealDamage(t, src2, d);
         if (src2.alive) battle.applyStatus(src2, "fragile", { duration: num5(bb2["weak[limit]"], 5), value: num5(bb2.damage_scale, 1) - 1, source: t });
@@ -5485,9 +7055,41 @@ function install(battle) {
       if (!st || !st.tiers[ID.arcane] || !st.members[ID.arcane].has(src)) return;
       const bb = st.bb[ID.arcane];
       const low = st.tiers[ID.arcane] >= 2 && t.hpRatio < num5(bb.hp_ratio);
-      battle.applyStrongest(t, KEY.arcane, { duration: num5(bb.weak_duration, 3), value: low ? st.arcaneLowMul : st.arcaneMul, mods: arcaneMods, source: src });
+      battle.applyStrongest(t, KEY4.arcane, { duration: num5(bb.weak_duration, 3), value: low ? st.arcaneLowMul : st.arcaneMul, mods: arcaneMods, source: src });
     });
   }
+}
+
+// mods/marisa-native/source/server/sim/content/devices.js
+function startColdWind(battle, { playerId = null, interval, duration, first, ownerOnly = false } = {}) {
+  const iv = num5(interval, 0);
+  if (!(iv > 0)) return null;
+  const durOf = () => num5(typeof duration === "function" ? duration() : duration, 0);
+  const handle = { cancelled: false, gusts: 0, timer: null, cancel() {
+    this.cancelled = true;
+    this.timer?.cancel();
+  } };
+  const gust = () => {
+    if (handle.cancelled || battle.finished) return;
+    const dur = durOf();
+    if (!(dur > 0)) return;
+    let n = 0;
+    for (const e of battle.enemies) {
+      if (!e.alive || e.hidden) continue;
+      if (ownerOnly && playerId != null && e.ownerId !== playerId) continue;
+      if (battle.applyStatus(e, "cold", { duration: dur, source: null })) n++;
+    }
+    handle.gusts++;
+    const R = battle.rect;
+    battle.fx("coldWind", { x: (R.c0 + R.c1) / 2, y: (R.r0 + R.r1) / 2, playerId, n, duration: dur });
+  };
+  const firstDelay = Math.max(0, num5(first, iv));
+  handle.timer = battle.after(firstDelay, () => {
+    if (handle.cancelled) return;
+    gust();
+    handle.timer = battle.every(iv, gust);
+  });
+  return handle;
 }
 
 // mods/marisa-native/source/server/sim/content/bands/battle.js
@@ -5495,6 +7097,11 @@ var PRIO_BAND_REVIVE = PRIO_RESPAWN - 1;
 var keyOf2 = (bandId, part = "") => `band:${bandId}${part ? `:${part}` : ""}`;
 var deployedOps = (battle, pid) => playerOps(battle, pid, { fieldOnly: true });
 var DEVOUR_TAG = "bond:egir:devour";
+var UNITE_WIND_ROUND = 6;
+var UNITE_WIND_INTERVAL = 25;
+var UNITE_WIND_DURATION = 20;
+var UNITE_ATK_PCT = 0.3;
+var UNITE_SP_RECOVERY_MUL = 0.8;
 var BY_KEY = {
   // 阿米娅 众志合一
   act1autochess_band2_buff(battle, ps, p, bandId) {
@@ -5706,12 +7313,51 @@ var BY_KEY = {
         by.profile.groundOnly = false;
       }
     });
+  },
+  // 怒潮凛冬 我们联合（MOD）— the whole strategy is battle-side (one BY_KEY key, three sub-effects).
+  //
+  //   凛冬将至       from round 6 on, a cold wind over the whole field every 25 s for 20 s (devices.startColdWind —
+  //                  the same helper 谢拉格's kjeragColdWind uses, minus its layer scaling: the duration is the plain
+  //                  constant 20, never a function of the layers; `ownerOnly` is not passed, so every enemy on the field
+  //                  is chilled, as for 谢拉格). `battle.round` is fixed when the Battle is built (Battle.js:81, from
+  //                  Match's `this.round`) and never changes during a battle — one round = one Battle — so the check is
+  //                  made ONCE, here at install time: round ≥ 6 installs the wind for the whole battle (its first gust at
+  //                  t = 25 s, the helper's `first` default), round < 6 installs nothing at all. Re-checking per round is
+  //                  impossible inside a battle and re-checking per tick would be a no-op; this is the faithful reading.
+  //                  The wind's rendering rides the existing `coldWind` fx kind (free 暴风雪 visual).
+  //   身后就是莫斯科  every operator of the player ATK +30 % — 面板攻击力, i.e. a 直接乘算 percentage (support
+  //                  directMods → atkPct, summed with every other 直接乘算), NOT dmgDealtMul (the owner's ruling).
+  //   乌萨斯的后勤    every operator of the player SP recovery ×0.8 (buffs.js MUL_KEYS `spRecoveryMul`; units.js:180
+  //                  computes `(base + ΣspRecoveryFlat) × ΠspRecoveryMul`, so 0.8 is exactly −20 % and a multiplier
+  //                  below 1 is applied as it is — the precedent of kits/ops/op-zumama.js:115).
+  //
+  // The numbers are read from the band blackboard (`p.atk`, `p.sp_recovery_mul`, `p.round`, `p.interval`, `p.duration`)
+  // and fall back to the owner's literal values, so a declaration that spells a key differently (or predates it) still
+  // behaves as specified. 直接乘算 / 乘算 buffs are standing (`passiveBuff`: persist + allowDead + replace by key), so
+  // they cover every operator of the player for the whole battle, exactly like 阿米娅's 众志合一.
+  MOD_band_unite(battle, ps, p, bandId) {
+    const round = Math.max(1, Math.floor(num5(p.round, UNITE_WIND_ROUND)));
+    if (battle.round >= round) {
+      startColdWind(battle, {
+        playerId: ps.playerId,
+        interval: Math.max(0, num5(p.interval, UNITE_WIND_INTERVAL)),
+        duration: Math.max(0, num5(p.duration, UNITE_WIND_DURATION))
+      });
+    }
+    const atk = num5(p.atk, UNITE_ATK_PCT);
+    const spMul = Math.max(0, num5(p.sp_recovery_mul, UNITE_SP_RECOVERY_MUL));
+    const key = keyOf2(bandId);
+    if (atk) {
+      const mods = directMods({ atk });
+      for (const u of playerOps(battle, ps.playerId)) passiveBuff(battle, u, key, mods);
+    }
+    if (spMul !== 1) for (const u of playerOps(battle, ps.playerId)) passiveBuff(battle, u, keyOf2(bandId, "sp"), { spRecoveryMul: spMul });
   }
 };
 var BATTLE_BUFF_KEYS = Object.freeze([...Object.keys(BY_KEY), "auto_chess_change_map"]);
-function install2(battle) {
+function install3(battle) {
   for (const ps of battle.players) {
-    const band = ps.bandId === "band_x_marisa_kun" ? bandRecord(ps.bandId) : null;
+    const band = ["band_x_marisa_kun", "band_x_marisa_unite"].includes(ps.bandId) ? bandRecord(ps.bandId) : null;
     if (!band) continue;
     for (const b of buffsOf(band)) {
       const f = b.bbKey ? BY_KEY[b.bbKey] : null;
@@ -5722,515 +7368,6 @@ function install2(battle) {
         battle._handlerError?.(`band:${ps.bandId}`, null, e);
       }
     }
-  }
-}
-
-// mods/marisa-native/source/server/sim/content/garrisons/battle.js
-var ids = (s) => String(s ?? "").split(",").map((x) => x.trim()).filter(Boolean);
-var EMPTY2 = Object.freeze([]);
-var AB_FLAG_STATUS = Object.freeze({ 16: "freeze" });
-function garrisonIdsOf(u) {
-  const list = u?.def?.raw?.garrisonIds ?? u?.def?.garrisonIds;
-  return Array.isArray(list) ? list : EMPTY2;
-}
-function install3(battle) {
-  const all = [];
-  const owned = /* @__PURE__ */ new Map();
-  const add = (unit, g, grantedBy = null) => {
-    let set = owned.get(unit);
-    if (!set) {
-      set = /* @__PURE__ */ new Set();
-      owned.set(unit, set);
-    }
-    if (set.has(g.garrisonId)) return null;
-    set.add(g.garrisonId);
-    const bb = g.bb || {};
-    const cap = num5(bb.max_add_count_per_battle, 0) > 0 ? num5(bb.max_add_count_per_battle) : Infinity;
-    const it = {
-      // The battle rune of the record (bbStr.key, e.g. the MOD_TRIGGER_* of the MOD chess, DATA §4) wins over the
-      // generic effectKey: it is what selects the handler, while effectKey stays the data's coarse family
-      // (act1autochess_gar_event_selfdead covers every MOD_TRIGGER_* record).
-      unit,
-      g,
-      gid: g.garrisonId,
-      key: g.bbStr && g.bbStr.key || g.effectKey,
-      bb,
-      bbStr: g.bbStr || {},
-      grantedBy,
-      cap,
-      capKey: `gar:${g.garrisonId}:${unit.id}`,
-      cnt: 0,
-      k: -1
-    };
-    all.push(it);
-    return it;
-  };
-  for (const u of battle.allyUnits) {
-    if (!isOp(u)) continue;
-    for (const gid of garrisonIdsOf(u)) {
-      const g = garrisonRecord(gid);
-      if (g && g.scriptHandler && g.eventType === "IN_BATTLE") add(u, g);
-    }
-  }
-  if (!all.length) return;
-  const grants = [];
-  for (const it of all.slice()) {
-    if (it.key !== "ADD_BOND") continue;
-    const g2 = garrisonRecord(it.bbStr.give_garrison_id);
-    if (!g2 || g2.eventType !== "IN_BATTLE") continue;
-    for (const t of grantTargets(battle, it)) {
-      const got = add(t, g2, it);
-      if (got) grants.push(got);
-    }
-  }
-  const by = /* @__PURE__ */ new Map();
-  for (const it of all) {
-    let arr = by.get(it.key);
-    if (!arr) {
-      arr = [];
-      by.set(it.key, arr);
-    }
-    arr.push(it);
-  }
-  for (const [key, list] of by) {
-    const inst = INSTALLERS[key];
-    if (inst) inst(battle, list);
-  }
-  installHitMods(battle, by);
-  installReaders(battle, by);
-  if (grants.length) {
-    battle.on("battleStart", () => {
-      for (const it of grants) fxOn(battle, "garrisonGrant", it.unit, `gar:${it.grantedBy.gid}`, it.gid, { from: it.grantedBy.unit.id });
-    });
-  }
-}
-function opsOf(battle, pid) {
-  const out = [];
-  for (const u of battle.allyUnits) if (isOp(u) && u.ownerId === pid && !u.removed) out.push(u);
-  return out;
-}
-function opAtHome(battle, pid, r, c) {
-  for (const u of battle.allyUnits) if (isOp(u) && u.ownerId === pid && !u.removed && u.homeR === r && u.homeC === c) return u;
-  return null;
-}
-function grantTargets(battle, it) {
-  const u = it.unit;
-  const desc = it.g.desc || "";
-  const need = it.bbStr.check_bond_id || null;
-  const ok = (t) => !!t && (!need || isMember(battle, t, need));
-  const front = () => {
-    const [fr, fc] = frontOf(u.homeR, u.homeC, u.dir);
-    return opAtHome(battle, u.ownerId, fr, fc);
-  };
-  if (desc.includes("\u6240\u6709")) return opsOf(battle, u.ownerId).filter(ok);
-  if (desc.includes("\u540C\u4E00\u884C\u6700\u53F3\u8FB9")) {
-    let best = null;
-    for (const t of opsOf(battle, u.ownerId)) {
-      if (t.homeR !== u.homeR) continue;
-      const col = (x) => x.player && x.player.mirror ? -x.homeC : x.homeC;
-      if (!best || col(t) > col(best)) best = t;
-    }
-    return ok(best) ? [best] : [];
-  }
-  const out = [];
-  if (desc.includes("\u81EA\u8EAB\u548C\u8EAB\u524D") && ok(u)) out.push(u);
-  const f = front();
-  if (ok(f)) out.push(f);
-  return out;
-}
-function targetBonds(battle, it) {
-  const u = it.unit;
-  switch (it.bbStr.bond_type) {
-    case "bond_self":
-      return unitBonds(u).filter((b) => bondActive(battle, u.ownerId, b));
-    case "bond_actived_maxstack": {
-      const b = topActiveBond(battle, u.ownerId);
-      return b ? [b] : EMPTY2;
-    }
-    default:
-      return ids(it.bbStr.bond_id);
-  }
-}
-function amountOf(battle, it) {
-  const bb = it.bb;
-  switch (it.bbStr.bond_add_type) {
-    case "by_charcount_samerow":
-      return rowMates(battle, it.unit).length * num5(bb.bond_add_count_multi, num5(bb.bond_add_count, 1));
-    case "by_charlevel":
-      return tierOf(it.unit) * num5(bb.bond_add_count, 1);
-    default:
-      return num5(bb.bond_add_count, 0);
-  }
-}
-function conditionMet(battle, it) {
-  const ck = it.bbStr.conditionkey;
-  const need = num5(it.bb.check_count, 0);
-  if (ck === "character_same_row") return rowMates(battle, it.unit).length >= need;
-  if (ck === "character_same_col") {
-    let n = 0;
-    for (const a of battle.allyUnits) if (isOp(a) && a.ownerId === it.unit.ownerId && onField(a) && a.tileC === it.unit.tileC) n++;
-    return n >= need;
-  }
-  return true;
-}
-function capOf(battle, it) {
-  const bondId = it.bb.cap_by_bond;
-  if (!bondId) return it.cap;
-  const elite = !!(it.unit.def && it.unit.def.raw && it.unit.def.raw.isGolden);
-  const min = elite ? num5(it.bb.cap_min_elite, num5(it.bb.cap_min, 3)) : num5(it.bb.cap_min, 3);
-  return Math.max(min, bondMembers(battle, it.unit.ownerId, bondId, { fieldOnly: true }).length);
-}
-function fireGain(battle, it) {
-  if (!conditionMet(battle, it)) return 0;
-  const bonds = targetBonds(battle, it);
-  if (!bonds.length) return 0;
-  let n = amountOf(battle, it);
-  const whole = it.bbStr.bond_type === "bond_actived_maxstack" && Number.isFinite(it.cap);
-  if (whole) {
-    n = Math.min(Math.floor(n), Math.max(0, Math.floor(it.cap) - (it.wholeUsed ?? 0)));
-    if (!(n > 0)) return 0;
-  }
-  const added = gainLayers(battle, {
-    playerId: it.unit.ownerId,
-    bonds,
-    n,
-    requireActive: true,
-    source: it.unit,
-    reason: "garrison",
-    cap: whole ? Infinity : capOf(battle, it),
-    capKey: whole ? null : it.capKey
-  });
-  if (whole && added > 0) it.wholeUsed = (it.wholeUsed ?? 0) + n;
-  if (added > 0) fxOn(battle, "garrison", it.unit, `gar:${it.gid}`, it.key, { n: added });
-  return added;
-}
-var byUnit = (list) => {
-  const m = /* @__PURE__ */ new Map();
-  for (const it of list) {
-    let a = m.get(it.unit);
-    if (!a) {
-      a = [];
-      m.set(it.unit, a);
-    }
-    a.push(it);
-  }
-  return m;
-};
-function isFrontOf(holder, u) {
-  if (!u || u === holder || u.ownerId !== holder.ownerId || !onField(u)) return false;
-  const [fr, fc] = frontOf(holder.tileR, holder.tileC, holder.dir);
-  return u.tileR === fr && u.tileC === fc;
-}
-function sourceInFront(holder, u, tile) {
-  if (!u || u === holder || u.ownerId !== holder.ownerId || !isOp(u) || !Array.isArray(tile)) return false;
-  const [fr, fc] = frontOf(holder.tileR, holder.tileC, holder.dir);
-  return tile[0] === fr && tile[1] === fc;
-}
-function ammoScope(it, u) {
-  const h = it.unit;
-  switch (it.bbStr.range_id) {
-    case "1-1":
-      return onField(h) && isFrontOf(h, u);
-    case "x-5":
-      return u === h || onField(h) && onField(u) && u.ownerId === h.ownerId && isOp(u) && Math.abs(u.tileR - h.tileR) + Math.abs(u.tileC - h.tileC) === 1;
-    default:
-      return u === h;
-  }
-}
-function altSkillsOf(u) {
-  const m = u.kit?.skills;
-  return m && typeof m === "object" ? m : null;
-}
-function levitateCast(u, skill) {
-  if (specAppliesLevitate(skill?.spec)) return true;
-  const id = skill?.id;
-  return !!(id && specAppliesLevitate(altSkillsOf(u)?.[id]));
-}
-function specAppliesLevitate(spec) {
-  return !!(spec && (spec.levitate === true || spec.flags && spec.flags.levitate));
-}
-var INSTALLERS = {
-  act1autochess_gar_event_useskill(battle, list) {
-    const m = byUnit(list);
-    battle.on("skillStart", ({ unit }) => {
-      const arr = m.get(unit);
-      if (arr) for (const it of arr) fireGain(battle, it);
-    });
-  },
-  act1autochess_gar_event_selfkillenemy(battle, list) {
-    const m = byUnit(list);
-    for (const it of list) it.allies = /我方干员/.test(it.g.desc || "");
-    battle.on("kill", ({ killer, victim }) => {
-      const arr = killer ? m.get(killer) : null;
-      if (!arr || !victim) return;
-      for (const it of arr) {
-        if (!(victim.side === "enemy" || it.allies && victim.side === "ally" && victim.kind === "op")) continue;
-        it.cnt++;
-        if (it.cnt % Math.max(1, num5(it.bb.check_cnt, 1)) === 0) fireGain(battle, it);
-      }
-    });
-  },
-  act1autochess_gar_event_selfdead(battle, list) {
-    const m = byUnit(list);
-    battle.on("death", ({ unit, reason }) => {
-      if (reason !== "killed") return;
-      const arr = m.get(unit);
-      if (arr) for (const it of arr) fireGain(battle, it);
-    });
-    const swaps = list.filter((it) => /替身/.test(it.g.desc || ""));
-    if (!swaps.length) return;
-    for (const it of swaps) it.doll = false;
-    battle.on("tick", () => {
-      for (let i = 0; i < swaps.length; i++) {
-        const it = swaps[i];
-        const u = it.unit;
-        const doll = !!(u.trait && u.trait.doll);
-        if (doll === it.doll) continue;
-        it.doll = doll;
-        if (u.alive && u.deployed) fireGain(battle, it);
-      }
-    });
-  },
-  act1autochess_gar_event_consume_ammo(battle, list) {
-    battle.on("ammoUsed", ({ unit }) => {
-      if (!unit) return;
-      for (let i = 0; i < list.length; i++) {
-        const it = list[i];
-        if (!ammoScope(it, unit)) continue;
-        it.cnt++;
-        if (it.cnt % Math.max(1, num5(it.bb.consume_count, 1)) === 0) fireGain(battle, it);
-      }
-    });
-  },
-  act1autochess_gar_event_enemy_abflag_inrange(battle, list) {
-    const watched = new Set(list.map((it) => AB_FLAG_STATUS[num5(it.bb.check_ab_flag, 16)] ?? "freeze"));
-    battle.on("statusApplied", ({ target, status, entered }) => {
-      if (!target || !watched.has(status) || !entered || target.side !== "enemy") return;
-      for (const it of list) {
-        if (status !== (AB_FLAG_STATUS[num5(it.bb.check_ab_flag, 16)] ?? "freeze")) continue;
-        if (!onField(it.unit) || !inRange(it.unit, target)) continue;
-        if (battle.rng() < num5(it.bb.prob, 1)) fireGain(battle, it);
-      }
-    });
-  },
-  act2autochess_gar_event_onstart(battle, list) {
-    const m = byUnit(list);
-    battle.on("deploy", ({ unit }) => {
-      const arr = m.get(unit);
-      if (arr) for (const it of arr) fireGain(battle, it);
-    });
-    const farTooth = byUnit(list.filter((it) => it.gid === "garrison_108_a" || it.gid === "garrison_108_b"));
-    if (farTooth.size) battle.on("dollSwap", ({ unit }) => {
-      const arr = farTooth.get(unit);
-      if (arr) for (const it of arr) fireGain(battle, it);
-    });
-  },
-  act2autochess_gar_event_allyenemy_sleepstun_inrange(battle, list) {
-    battle.on("statusApplied", ({ target, status, entered }) => {
-      if (!target || status !== "sleep" && status !== "stun" || !entered) return;
-      if (!(target.side === "enemy" || target.side === "ally" && target.kind === "op")) return;
-      for (const it of list) if (onField(it.unit) && inRange(it.unit, target)) fireGain(battle, it);
-    });
-  },
-  /**
-   * 予愿安洁莉娜 "己方任意干员起飞时（含自身），使已激活的【叙拉古】【迅捷】层数各+1": 起飞 is the skill flag
-   * `liftoff` of the airborne allies (蒂比 / 予愿安洁莉娜's skills, gamedata_const ba.liftoff) — the engine has no 起飞
-   * event, the flag is read off `u.s.flags.liftoff` and polled here: a false → true change is one take-off (the take-off
-   * of a unit already listed at install time counts too: previous = false).
-   */
-  MOD_TRIGGER_ally_liftoff(battle, list) {
-    const prev = /* @__PURE__ */ new Map();
-    battle.on("tick", () => {
-      for (const u of battle.allyUnits) {
-        const air = !!(u.s.flags.liftoff && u.alive && u.deployed);
-        if (air === (prev.get(u) ?? false)) continue;
-        prev.set(u, air);
-        if (air) for (const it of list) fireGain(battle, it);
-      }
-    });
-  },
-  /**
-   * 予愿安洁莉娜 "每次释放可施加浮空的技能时，使已激活的【远见】层数+1": the cast itself is the trigger (skillStart),
-   * the condition is that the cast skill can apply 浮空. A kit declares that with the skill flag `levitate` on the spec
-   * (tier3 予愿安洁莉娜 S2 重力自定义) — the same spec-flag route as 起飞. The keys are marked so that a skill spec of
-   * the very chess carrying the garrison (its own take-off flag) can never satisfy the check by accident.
-   */
-  MOD_TRIGGER_levitate_skill_cast(battle, list) {
-    const m = byUnit(list);
-    battle.on("skillStart", ({ unit, skill }) => {
-      const arr = m.get(unit);
-      if (!arr || !levitateCast(unit, skill)) return;
-      for (const it of arr) if (onField(it.unit)) fireGain(battle, it);
-    });
-  },
-  act1autochess_gar_event_addition_cnt(battle, list) {
-    battle.on("layerGain", (ctx) => {
-      if (ctx.reason !== "garrison" || !ctx.source) return;
-      for (const it of list) {
-        const h = it.unit;
-        if (h.ownerId !== ctx.playerId || !onField(h)) continue;
-        if (it.bbStr.range_id && it.bbStr.range_id !== "1-1") continue;
-        if (sourceInFront(h, ctx.source, ctx.tile)) ctx.n += num5(it.bb.extra_cnt, 0);
-      }
-    });
-  },
-  GAIN_BUFF(battle, list) {
-    for (const it of list) {
-      const mods = {};
-      if (num5(it.bb.atk, 0) > 0) mods.atkMul = num5(it.bb.atk);
-      if (num5(it.bb.max_hp, 0) > 0) mods.hpMul = num5(it.bb.max_hp);
-      if (num5(it.bb.def, 0) > 0) mods.defMul = num5(it.bb.def);
-      passiveBuff(battle, it.unit, `gar:${it.gid}`, mods);
-    }
-  },
-  attr_common_global_buff(battle, list) {
-    for (const it of list) {
-      const mods = {};
-      if (num5(it.bb.sp_recovery_per_sec, 0)) mods.spRecoveryFlat = num5(it.bb.sp_recovery_per_sec);
-      Object.assign(mods, directMods({ atk: num5(it.bb.atk, 0), hp: num5(it.bb.max_hp, 0) }));
-      if (num5(it.bb.attack_speed, 0)) mods.aspd = num5(it.bb.attack_speed);
-      passiveBuff(battle, it.unit, `gar:${it.gid}`, mods);
-    }
-  },
-  // grants are resolved in install(); 风丸's rule lives in the prep economy
-  ADD_BOND() {
-  },
-  NONE() {
-  }
-};
-var READERS = /* @__PURE__ */ new Set([
-  "act1autochess_gar_eff_attrByBond",
-  "act1autochess_gar_eff_respawnTimeByBond",
-  "act2autochess_gar_eff_attrByBond_add_onstart",
-  "act2autochess_gar_eff_ab_damageScaleByBond"
-]);
-function stepsOf(battle, it) {
-  const div = Math.max(1, num5(it.bb.divide_num, 1));
-  let sum = 0;
-  for (const b of it.bonds ?? (it.bonds = ids(it.bbStr.bond_id))) if (bondActive(battle, it.unit.ownerId, b)) sum += bondLayers(battle, it.unit.ownerId, b);
-  return Math.floor(sum / div);
-}
-function attrMods(bb, k) {
-  const m = directMods({ atk: num5(bb.atk, 0) * k, hp: num5(bb.max_hp, 0) * k, def: num5(bb.def, 0) * k });
-  if (num5(bb.attack_speed, 0)) m.aspd = num5(bb.attack_speed) * k;
-  if (num5(bb.hp_recovery_per_sec, 0)) m.hpRegen = num5(bb.hp_recovery_per_sec) * k;
-  if (num5(bb.sp_recovery_per_sec, 0)) m.spRecoveryFlat = num5(bb.sp_recovery_per_sec) * k;
-  return m;
-}
-function applyReader(battle, it) {
-  const k = stepsOf(battle, it);
-  if (k === it.k) return;
-  it.k = k;
-  const u = it.unit;
-  const key = `gar:${it.gid}`;
-  switch (it.key) {
-    case "act1autochess_gar_eff_attrByBond":
-      if (k > 0) passiveBuff(battle, u, key, attrMods(it.bb, k));
-      else battle.removeBuff(u, key);
-      break;
-    case "act1autochess_gar_eff_respawnTimeByBond":
-      if (k > 0) passiveBuff(battle, u, key, { redeployMul: Math.max(0, 1 + num5(it.bb.respawn_time, 0) * k) });
-      else battle.removeBuff(u, key);
-      break;
-    case "act2autochess_gar_eff_attrByBond_add_onstart": {
-      const b = u.findBuff(key);
-      if (b && b.timeLeft > 0) onstartBuff(battle, it, b.timeLeft);
-      break;
-    }
-    default:
-      break;
-  }
-}
-function onstartBuff(battle, it, duration) {
-  const k = Math.max(0, it.k);
-  const key = `gar:${it.gid}`;
-  if (!(k > 0) || !(duration > 0)) {
-    battle.removeBuff(it.unit, key);
-    return;
-  }
-  battle.addBuff(it.unit, { key, duration, refresh: "replace", mods: { atkFlat: num5(it.bb.atk, 0) * k, hpFlat: num5(it.bb.max_hp, 0) * k } });
-}
-function installReaders(battle, by) {
-  const list = [];
-  for (const key of READERS) for (const it of by.get(key) ?? EMPTY2) list.push(it);
-  if (!list.length) return;
-  const recompute = () => {
-    for (const it of list) applyReader(battle, it);
-  };
-  recompute();
-  let pending = false;
-  battle.on("layerGain", () => {
-    if (pending) return;
-    pending = true;
-    battle.after(0, () => {
-      pending = false;
-      recompute();
-    });
-  });
-  const onstart = by.get("act2autochess_gar_eff_attrByBond_add_onstart");
-  if (onstart) {
-    const m = byUnit(onstart);
-    battle.on("deploy", ({ unit }) => {
-      const arr = m.get(unit);
-      if (!arr) return;
-      for (const it of arr) {
-        it.k = stepsOf(battle, it);
-        onstartBuff(battle, it, num5(it.bb.duration, 0));
-      }
-    });
-  }
-}
-function weaknessType(source, target, dmg) {
-  const ss = source && source.s ? source.s : null;
-  const ign = {
-    defIgnorePct: num5(dmg.defIgnorePct, 0) + (ss ? num5(ss.defIgnorePct, 0) : 0),
-    defIgnoreFlat: num5(dmg.defIgnoreFlat, 0) + (ss ? num5(ss.defIgnoreFlat, 0) : 0),
-    resIgnorePct: num5(dmg.resIgnorePct, 0) + (ss ? num5(ss.resIgnorePct, 0) : 0),
-    resIgnoreFlat: num5(dmg.resIgnoreFlat, 0) + (ss ? num5(ss.resIgnoreFlat, 0) : 0)
-  };
-  const ph = mitigate(dmg.amount, "phys", target.s, ign) * (ss ? num5(ss.physDealtMul, 1) : 1) * num5(target.s.physTakenMul, 1);
-  const ar = mitigate(dmg.amount, "arts", target.s, ign) * (ss ? num5(ss.artsDealtMul, 1) : 1) * num5(target.s.artsTakenMul, 1);
-  if (ar > ph + 1e-9) return "arts";
-  if (ph > ar + 1e-9) return "phys";
-  return dmg.type;
-}
-var bound = (t) => !!(t.s && t.s.flags && t.s.flags.bind) || !!t.findBuff("bind");
-var WEAKNESS_PRIORITY = -10;
-function installHitMods(battle, by) {
-  const m = /* @__PURE__ */ new Map();
-  const push = (it, kind) => {
-    let a = m.get(it.unit);
-    if (!a) {
-      a = [];
-      m.set(it.unit, a);
-    }
-    a.push({ it, kind });
-  };
-  for (const it of by.get("act1autochess_gar_eff_attack_enemy") ?? EMPTY2) push(it, "tag");
-  for (const it of by.get("act2autochess_gar_eff_ab_damageScaleByBond") ?? EMPTY2) push(it, "ab");
-  if (m.size) {
-    battle.on("hit", ({ source, target, dmg }) => {
-      const arr = source ? m.get(source) : null;
-      if (!arr || !target || target.side !== "enemy" || !dmg || dmg.type === "element") return;
-      for (let i = 0; i < arr.length; i++) {
-        const { it, kind } = arr[i];
-        if (kind === "tag") {
-          if (Array.isArray(dmg.tags) && dmg.tags.includes("dot")) continue;
-          const tags = target.def && target.def.tags;
-          if (Array.isArray(tags) && tags.includes(it.bbStr.check_tag)) dmg.amount *= num5(it.bb.atk, 1);
-        } else if (it.k > 0) {
-          const hit = num5(it.bb.check_ab_flag, 0) && bound(target) || num5(it.bb.check_sluggish, 0) && !!target.findBuff("sluggish");
-          if (hit) dmg.mul = num5(dmg.mul, 1) * (1 + num5(it.bb.damage_scale_per_stack, 0) * it.k);
-        }
-      }
-    });
-  }
-  const chaos = new Set((by.get("act1autochess_gar_eff_chaos") ?? EMPTY2).map((it) => it.unit));
-  if (chaos.size) {
-    battle.on("hit", ({ source, target, dmg }) => {
-      if (!source || !chaos.has(source) || !target || target.side !== "enemy" || !dmg) return;
-      if (dmg.type === "phys" || dmg.type === "arts") dmg.type = weaknessType(source, target, dmg);
-    }, { priority: WEAKNESS_PRIORITY });
   }
 }
 
@@ -6343,8 +7480,67 @@ function settlePrepGain(ps) {
   return add;
 }
 
+// mods/marisa-native/source/server/sim/content/bonds/addon/unite-meta.js
+var BOND4 = "bond_x_marisa_uniteShip";
+var FIVE_YEAR_GOLDEN_ITEM_LAYERS = 50;
+var FIVE_YEAR_TOP_TIER_LAYERS = 100;
+function unsoldSlots(ctx, kind) {
+  return ctx.shopSlots().map((s, i) => s && s.kind === kind && !s.sold ? i : -1).filter((i) => i >= 0);
+}
+function goldenShopItems(ctx) {
+  const slots = ctx.shopSlots();
+  let n = 0;
+  for (const i of unsoldSlots(ctx, "item")) {
+    const id = slots[i].id;
+    if (ctx.gd.isGolden(id)) continue;
+    const rec = ctx.gd.item(id);
+    const gid = rec ? rec.upgradeChessId || rec.goldenId : null;
+    if (!gid || !ctx.gd.item(gid)) continue;
+    if (ctx.setShopSlot(i, { kind: "item", id: gid, price: ctx.gd.itemPrice(id) * 2 })) n++;
+  }
+  return n;
+}
+function topTierShopChess(ctx) {
+  const tier = Math.max(1, ctx.shopLevel());
+  const idx = unsoldSlots(ctx, "chess");
+  if (!idx.length) return 0;
+  const slots = ctx.shopSlots();
+  for (const i of idx) if (ctx.gd.tierOf(slots[i].id) === tier) return 0;
+  const id = ctx.rollChess({ tier });
+  if (!id) return 0;
+  return ctx.setShopSlot(idx[0], { kind: "chess", id }) ? 1 : 0;
+}
+function fiveYearPlan(ctx) {
+  if (!ctx.bondActive(BOND4)) return;
+  const L3 = ctx.layers(BOND4);
+  if (L3 >= FIVE_YEAR_GOLDEN_ITEM_LAYERS) goldenShopItems(ctx);
+  if (L3 >= FIVE_YEAR_TOP_TIER_LAYERS) topTierShopChess(ctx);
+}
+var HOOKS = {
+  onRefresh(ctx, ev) {
+    if (ev && ev.trigger) return;
+    fiveYearPlan(ctx);
+  },
+  onRoundStart(ctx) {
+    fiveYearPlan(ctx);
+  }
+};
+function registerUniteMeta(registry) {
+  const prev = typeof registry.get === "function" ? registry.get(`bond:${BOND4}`) : null;
+  const handler = { ...prev || {} };
+  for (const [hook, fn] of Object.entries(HOOKS)) {
+    const before = prev && typeof prev[hook] === "function" ? prev[hook] : null;
+    handler[hook] = before ? function merged(ctx, ev) {
+      before.call(this, ctx, ev);
+      fn(ctx, ev);
+    } : fn;
+  }
+  registry.bond(BOND4, handler);
+}
+
 // mods/marisa-native/runtime-prep.js
 function installPrep(sp) {
+  registerUniteMeta({ bond: (id, handler) => sp.meta.register(`bond:${id}`, handler) });
   const matches = /* @__PURE__ */ new WeakMap();
   const state = (ctx) => {
     let states = matches.get(ctx.gd);
@@ -6385,6 +7581,29 @@ function installPrep(sp) {
   });
 }
 
+// mods/marisa-native/runtime-items.js
+function installPersonaBond(battle) {
+  const holders = battle.allyUnits.filter((unit) => unit.kind === "op" && itemsOf(unit).some((id) => itemRecord(id)?.selfGrantBondId === "bond_x_marisa_seesShip"));
+  if (!holders.length) return;
+  function refresh() {
+    for (const unit of holders) {
+      let attackBonus = 0;
+      for (const id of itemsOf(unit)) {
+        const item = itemRecord(id);
+        if (item?.selfGrantBondId !== "bond_x_marisa_seesShip" || !item.isGolden) continue;
+        const params = item.params ?? {};
+        const steps = Math.floor(bondLayers(battle, unit.ownerId, "bond_x_marisa_seesShip") / Math.max(1, num5(params.stat_step, 10)));
+        attackBonus += Math.min(num5(params.stat_cap, 0.2), steps * num5(params.atk_per_step, 0.05));
+      }
+      passiveBuff(battle, unit, "item:marisa:persona-bond", directMods({ atk: attackBonus }));
+    }
+  }
+  refresh();
+  battle.on("layerGain", (event) => {
+    if (event.bondId === "bond_x_marisa_seesShip") battle.after(0, refresh);
+  });
+}
+
 // mods/marisa-native/runtime-entry.js
 function setup(sp) {
   for (const [id, fn] of [
@@ -6394,14 +7613,25 @@ function setup(sp) {
     ["char_x_marisa_amiya3", op_amiya3_default.char_x_marisa_amiya3],
     ["chess_x_marisa_aglna2", mod_aglna2_default.char_1015_aglna2],
     ["chess_x_marisa_kalts2", mod_kalts2_default.char_1052_kalts2],
+    ["chess_x_marisa_headbr", op_headbr_default.char_x_marisa_headbr],
+    ["char_x_marisa_headbr", op_headbr_default.char_x_marisa_headbr],
+    ["chess_x_marisa_headb2", op_headb2_default.char_1051_headb2],
+    ["chess_x_marisa_helage", op_helage_default.char_188_helage],
+    ["chess_x_marisa_kormr", op_kormr_default.char_x_marisa_kormr],
+    ["char_x_marisa_kormr", op_kormr_default.char_x_marisa_kormr],
+    ["chess_x_marisa_aigis", op_aigis_default.char_x_marisa_aigis],
+    ["char_x_marisa_aigis", op_aigis_default.char_x_marisa_aigis],
+    ["chess_x_marisa_yukari", op_yukari_default.char_x_marisa_yukari],
+    ["char_x_marisa_yukari", op_yukari_default.char_x_marisa_yukari],
     [ANCHOR, anchorKit],
     [MARKER, markerKit]
   ]) sp.kits.register(id, fn);
   sp.content.register({ id: "marisa:gameplay", install(battle) {
     setGameData(contentDataOf(battle.data));
-    install(battle);
     install2(battle);
     install3(battle);
+    install(battle);
+    installPersonaBond(battle);
   } });
   installPrep(sp);
 }

@@ -6,11 +6,18 @@ const MOD_OPERATORS = Object.freeze([
   Object.freeze({ charId: 'char_1015_aglna2', chessId: 'chess_char_1015_aglna2_a', type: 'existing' }),
   Object.freeze({ charId: 'char_1052_kalts2', chessId: 'chess_char_1052_kalts2_a', type: 'existing' }),
   Object.freeze({ charId: 'char_1037_amiya3', chessId: 'chess_char_1037_amiya3_a', type: 'addition' }),
+  Object.freeze({ charId: 'char_115_headbr', chessId: 'chess_char_115_headbr_a', type: 'addition' }),
+  Object.freeze({ charId: 'char_1051_headb2', chessId: 'chess_char_1051_headb2_a', type: 'existing' }),
+  Object.freeze({ charId: 'char_188_helage', chessId: 'chess_char_188_helage_a', type: 'existing' }),
+  Object.freeze({ charId: 'char_4220_kormr', chessId: 'chess_char_4220_kormr_a', type: 'addition' }),
+  Object.freeze({ charId: 'char_4218_aigis', chessId: 'chess_char_4218_aigis_a', type: 'addition' }),
+  Object.freeze({ charId: 'char_4219_yukari', chessId: 'chess_char_4219_yukari_a', type: 'addition' }),
 ]);
 export const MOD_ADDED_OPERATORS = Object.freeze(MOD_OPERATORS.filter((op) => op.type === 'addition'));
 export const MOD_EXISTING_VARIANTS = Object.freeze(MOD_OPERATORS.filter((op) => op.type === 'existing'));
 export const MOD_EXISTING_OPERATOR_IDS = Object.freeze([
   'char_171_bldsk', // Warfarin gains the new Rhode Island affiliation.
+  'char_196_sunbr', // Gummy gains the Students' Union affiliation and garrison.
   'char_003_kalts', 'char_4179_monstr', 'char_4195_radian', 'char_4228_closur', 'char_4230_mcnist', // Existing DIY candidates gain Rhode Island.
   ...MOD_EXISTING_VARIANTS.map((op) => op.charId),
 ]);
@@ -24,16 +31,24 @@ export const MOD_ADDED_BOND_MEMBERS = Object.freeze([
   Object.freeze({ bondId: 'miraShip', charId: 'char_1015_aglna2' }),
   Object.freeze({ bondId: 'visiShip', charId: 'char_1037_amiya3' }),
   Object.freeze({ bondId: 'emptyShip', charId: 'char_1052_kalts2' }),
+  Object.freeze({ bondId: 'steadShip', charId: 'char_115_headbr' }),
+  Object.freeze({ bondId: 'emptyShip', charId: 'char_1051_headb2' }),
+  Object.freeze({ bondId: 'emptyShip', charId: 'char_188_helage' }),
 ]);
 export const MOD_ADDED_BOND_MEMBER_IDS = Object.freeze(MOD_ADDED_BOND_MEMBERS.map(({ bondId, charId }) => `${bondId}:${charId}`));
-// This profile introduces only Rhode Island. Existing alliances are managed via MOD_ADDED_BOND_MEMBERS above.
-export const MOD_BOND_IDS = Object.freeze(['rhodeShip']);
+// Keep this order stable: native settings encode membership selections by their catalogue index.
+export const MOD_BOND_IDS = Object.freeze(['rhodeShip', 'seesShip', 'uniteShip']);
 export const MOD_NEW_BOND_MEMBERS = Object.freeze([
-  'char_171_bldsk', 'char_1052_kalts2', 'char_1037_amiya3',
+  ...['char_171_bldsk', 'char_1052_kalts2', 'char_1037_amiya3',
   'char_003_kalts', 'char_4179_monstr', 'char_4195_radian', 'char_4228_closur', 'char_4230_mcnist',
-].map((charId) => Object.freeze({ bondId: 'rhodeShip', charId })));
+  ].map((charId) => Object.freeze({ bondId: 'rhodeShip', charId })),
+  ...['char_4217_makoto', 'char_4220_kormr', 'char_4218_aigis', 'char_4219_yukari']
+    .map(charId => Object.freeze({bondId: 'seesShip', charId})),
+  ...['char_196_sunbr', 'char_115_headbr', 'char_1051_headb2', 'char_188_helage']
+    .map(charId => Object.freeze({bondId: 'uniteShip', charId})),
+]);
 const NEW_BOND_MEMBER_IDS = new Set(MOD_NEW_BOND_MEMBERS.map(({ bondId, charId }) => `${bondId}:${charId}`));
-export const MOD_STRATEGY_IDS = Object.freeze(['band_kun']);
+export const MOD_STRATEGY_IDS = Object.freeze(['band_kun', 'band_unite']);
 
 export const validMods = (v) => Array.isArray(v) && v.length <= 1 && (v.length === 0 || v[0] === MOD_ID);
 export const profileBase = (mods) => validMods(mods) && mods.length ? '/data/mods/marisa/' : '/data/';
@@ -249,6 +264,7 @@ export function composeModData(base, extended, rawOptions = null) {
         diy.locked[tier][charId] = {
           skillIndex: source.backup?.skillIndex ?? 0, uniEquipId: null, from: [sourceId], exclusive: true,
           modKitId: `chess_${charId}`, bonds: list(row?.bonds || source.bonds), displayTokens: list(source.tokens),
+          garrisonIds: list(source.garrisonIds),
         };
       }
       if (!base.backups?.diy?.operators?.[charId]) diy.operators[charId] = {
@@ -314,7 +330,9 @@ export function composeModData(base, extended, rawOptions = null) {
   }
 
   if (out.bonds) {
-    if (disabledBonds.has('rhodeShip') && !base.bonds?.rhodeShip) delete out.bonds.rhodeShip;
+    for (const bondId of disabledBonds) {
+      if (!base.bonds?.[bondId]) delete out.bonds[bondId];
+    }
     for (const [bondId, bond] of Object.entries(out.bonds)) {
       const prior = list(bond.members);
       const members = prior.filter((id) => {
@@ -343,7 +361,17 @@ export function composeModData(base, extended, rawOptions = null) {
     for (const id of Object.keys(out.tokens)) if (!base.tokens?.[id] && !usedTokens.has(id)) delete out.tokens[id];
   }
 
-  if (out.effects && out.bonds && disabledBonds.has('rhodeShip') && !base.effects?.bondeffect_rhode) delete out.effects.bondeffect_rhode;
+  // An equipment grant must never point at a disabled alliance. Its two forms and effects
+  // belong to S.E.E.S, so remove them together when that alliance is disabled.
+  for (const [id, item] of Object.entries(out.items ?? {})) {
+    if (!disabledBonds.has(item.selfGrantBondId) || base.items?.[id]) continue;
+    delete out.items[id];
+    if (!base.effects?.[item.effectId]) delete out.effects?.[item.effectId];
+  }
+  for (const bondId of disabledBonds) {
+    const effectId = extended.bonds?.[bondId]?.effectId;
+    if (effectId && !base.effects?.[effectId]) delete out.effects?.[effectId];
+  }
   const disabledStrategies = new Set(options.strategies.enabled ? options.strategies.disabledIds : MOD_STRATEGY_IDS);
   for (const id of disabledStrategies) {
     const band = out.bands?.[id];

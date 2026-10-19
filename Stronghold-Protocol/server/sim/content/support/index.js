@@ -18,7 +18,7 @@
 //     `PlayerBattleInput.contentInfo`, written by the `global:contentb_info` meta handler (support/meta.js).
 
 import { getData } from '../../../data.js';
-import { grantedBondsByMorph } from '../../../../shared/plugins/rules.js';
+import { grantedBondsByMorph, selfGrantedBonds } from '../../../../shared/plugins/rules.js';
 import { COLS, DIRECT_BONUS_STACKING } from '../../constants.js';
 import { frontOf, offsetTile } from '../../dir.js';
 import { bodyInKeys, bodyDist, bodyInRadius, bodyOnTile, bodyTileReach, bodyInRange } from '../../body.js';
@@ -184,6 +184,9 @@ export function unitBonds(u) {
   const key = (plus ? 'plus|' : '') + items.join('|');
   if (cached && cached.key === key) return cached.bonds;
   const out = [...(Array.isArray(u.def?.bonds) ? u.def.bonds : Array.isArray(u.def?.raw?.bonds) ? u.def.raw.bonds : [])];
+  for (const bondId of selfGrantedBonds(items, itemRecord, id => !!bondRecord(id))) {
+    if (!out.includes(bondId)) out.push(bondId);
+  }
   for (const b of grantedBondsByMorph(items, (id) => itemRecord(id), { mode: plus ? 'plus' : 'official', bondOk: (id) => !!bondRecord(id) })) {
     if (!out.includes(b)) out.push(b);
   }

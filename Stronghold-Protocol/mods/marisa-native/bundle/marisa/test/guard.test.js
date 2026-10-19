@@ -20,6 +20,61 @@ const tags = (c, tag) => c.dmg?.tags?.includes(tag);
 const LIFTOFF = 1024; // shared/constants.js UF.LIFTOFF, the snapshot wire flag (not UF.FLYING).
 const hasLiftoff = (h, u) => !!(h.snapshot().units.find(t => t[0] === u.id)?.[7] & LIFTOFF);
 
+test('the six newly published operator kits cast their first skill without generic fallback', () => {
+  for (const id of ['chess_x_marisa_headbr', 'chess_x_marisa_headb2', 'chess_x_marisa_helage',
+    'chess_x_marisa_kormr', 'chess_x_marisa_aigis', 'chess_x_marisa_yukari']) {
+    const h = field({id});
+    h.step();
+    const unit = h.unit(1);
+    h.spawn('dummy', {pos: [10, 5]});
+    assert.notEqual(unit.kit.skillSource, 'generic', id);
+    cast(unit);
+    h.run(3);
+    clean(h);
+  }
+});
+
+test('S.E.E.S equipment grants control membership and its elite bonus follows live layers', () => {
+  const h = field({id: 'chess_char_1_01', units: [
+    {uid: 2, chessId: 'chess_x_marisa_aigis_a', row: 11, col: 4},
+  ], bonds: {bond_x_marisa_seesShip: {active: true, count: 3, tier: 1, layers: 500}}});
+  h.step();
+  const member = h.unit(2), enemy = h.spawn('dummy', {pos: [11, 5]});
+  h.b.dealDamage(member, enemy, {amount: 1, type: 'phys', isAttack: true});
+  assert.ok(enemy.findBuff('sluggish'), 'the real alliance hit hook applies control');
+  clean(h);
+
+  const equipped = field({id: 'chess_char_1_01', bonds: {bond_x_marisa_seesShip: {active: true, count: 3, tier: 1, layers: 20}}, units: [
+    {uid: 2, chessId: 'chess_char_1_02_a', row: 11, col: 4, items: ['item_x_marisa_3_13_e_b']},
+  ]});
+  equipped.step();
+  const wearer = equipped.unit(2);
+  approx(wearer.findBuff('item:marisa:persona-bond').mods.atkPct, 0.1, '20 layers give +10%');
+  equipped.b.addLayers('p1', 'bond_x_marisa_seesShip', 20, 'test');
+  equipped.step();
+  approx(wearer.findBuff('item:marisa:persona-bond').mods.atkPct, 0.2, '40 layers reach the +20% cap');
+  clean(equipped);
+});
+
+test('Students Union revives through a neighbour and the new strategy produces its round-six cold wind', () => {
+  const h = field({id: 'chess_x_marisa_headbr', bonds: {bond_x_marisa_uniteShip: {active: true, count: 1, tier: 1, layers: 0}}, units: [
+    {uid: 2, chessId: 'chess_char_1_02_a', row: 11, col: 4},
+  ]});
+  h.step();
+  const victim = h.unit(1), helper = h.unit(2), expectedHp = helper.hp / 2;
+  h.b.kill(victim);
+  assert.ok(victim.alive, 'the alliance revives the knocked-out member');
+  approx(victim.hp, Math.min(victim.s.maxHp, expectedHp), 'revival uses the shared HP');
+  clean(h);
+
+  const wind = field({id: 'chess_x_marisa_headbr', bandId: 'band_x_marisa_unite', round: 6});
+  wind.step();
+  const enemy = wind.spawn('dummy', {pos: [10, 8]});
+  wind.run(25.1);
+  assert.ok(enemy.findBuff('cold'), 'the scheduled strategy wind reaches real enemies');
+  clean(wind);
+});
+
 function field({ id = AMIYA, form = 'a', skill = 0, units = [], enemies = {}, ...opts } = {}) {
   return makeBattle({
     timeLimit: 120, autoFinish: false, captureNoisy: true,

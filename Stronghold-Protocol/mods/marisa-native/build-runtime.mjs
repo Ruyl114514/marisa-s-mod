@@ -18,9 +18,13 @@ const built=await esbuild.build({metafile:true,entryPoints:[path.join(import.met
    if(p.endsWith('/sim/simdata.js')) source=source.replace(/const IS_NODE = [^;]+;/,'const IS_NODE = false;').replace(/if \(IS_NODE\) \{[\s\S]*?\n\}/,'');
    if(p.endsWith('/match/bondsMeta.js')) source='export const pieceBonds=(gd,p)=>gd.pieceBonds(p.uid);';
    if(p.endsWith('/match/rhodeMeta.js')) source=source.replace(/function rangeKeysOf\(ps, piece, key, dir\) \{[\s\S]*?\n\}/,'function rangeKeysOf(ps,piece){return ps.rangeKeys(piece.uid);}');
-   if(p.endsWith('/bonds/addon/battle.js'))source=source.replace(/export const ID = Object.freeze\(\{[\s\S]*?\}\);/,"export const ID=Object.freeze({rhode:'rhodeShip'});").replace('num(bb.aura_l_max, 100)','100 * num(bb.aura_l_max, 1)');
+   // The host installs official alliances and strategies. The plugin installs only its additions.
+   if(p.endsWith('/bonds/addon/battle.js'))source=source.replace(/export const ID = Object.freeze\(\{[\s\S]*?\}\);/,"export const ID=Object.freeze({rhode:'rhodeShip',sees:'seesShip',unite:'uniteShip'});");
+   if(p.endsWith('/bonds/addon/rhode.js'))source=source.replace('num(bb.aura_l_max, 100)','100 * num(bb.aura_l_max, 1)');
+   if(p.endsWith('/bonds/addon/sees.js'))source=source.replace('num(bb.shinko_gauge_max, DEFAULTS.shinko_gauge_max)','100 * num(bb.shinko_gauge_max, DEFAULTS.shinko_gauge_max / 100)');
+   if(p.endsWith('/garrisons/battle.js'))source=source.replace('S.num(bb.max_attack_speed, 0)','100 * S.num(bb.max_attack_speed, 0)');
    if(p.endsWith('/garrisons/battle.js')) source=source.replace("if (g && g.eventType === 'IN_BATTLE')", "if (g && g.scriptHandler && g.eventType === 'IN_BATTLE')");
-   if(p.endsWith('/bands/battle.js'))source=source.replace('const band = ps.bandId ? bandRecord(ps.bandId) : null;',"const band = ps.bandId === 'band_kun' ? bandRecord(ps.bandId) : null;").replace('  installMapChars(battle);','');
+   if(p.endsWith('/bands/battle.js'))source=source.replace('const band = ps.bandId ? bandRecord(ps.bandId) : null;',"const band = ['band_kun','band_unite'].includes(ps.bandId) ? bandRecord(ps.bandId) : null;").replace('  installMapChars(battle);','');
    source=rename(source);
    // Preserve deterministic engine arithmetic in the single-file SDK module.
    source=source.replace(/\.localeCompare\(([^()]*)\)/g,'.__compare($1)');
