@@ -18,7 +18,7 @@ import { officialKit } from '../sim/content/index.js';
 import { KITTED_CHARS } from '../sim/content/kits/index.js';
 import { exportOfficialBounds, rememberOfficialBounds } from '../../shared/plugins/officialBounds.js';
 import { browserScriptSources } from '../../shared/plugins/scriptLoad.js';
-import { preflightScripts } from './scriptPreflight.js';
+import { preflightScripts, preflightScriptsSync } from './scriptPreflight.js';
 import { bossCentreWarnings } from './stageWarnings.js';
 import { validateDsl, validatePrepSpec } from '../sim/content/dsl/validate.js';
 import { applyMarisaProfile } from '../../shared/plugins/profile.js';
@@ -208,8 +208,15 @@ function wavesUsedByMode(mode) {
   return ids;
 }
 
-/** C1. ids accepts ids or {id, settings}; failures return only {problems}, never a usable cs/data. */
-function composeContentSet({ registry, ids = [], checkDataOnly = false }) {
+/** C1. ids accepts ids or {id, settings}; failures return only {problems}, never a usable cs/data.
+ *
+ * A generator, not a plain function: the script registration preflight (scriptPreflight.js) runs a child process and is
+ * asynchronous, and awaiting it keeps the server serving while a slow plugin's setup runs instead of blocking every
+ * socket for the seconds it takes. Only that one step is asynchronous — the pure composition is synchronous — so
+ * buildContentSet can serve the callers that provably never reach it (checkDataOnly, and sets holding no script).
+ * The remaining synchronous stretch is one plugin's own documents (a MOD's profile table can be megabytes); it is why
+ * server/index.js warms the default set at boot (plugins/warmup.js) instead of leaving it to the first room.create. */
+function* composeContentSet({ registry, ids = [], checkDataOnly = false }) {
   if (!registry || !Array.isArray(ids)) return { problems: [problem('PLUGIN_CONTENT_FORMAT', 'ids', 'registry and plugin ids required')] };
   let base;
   try { base = baseFor(registry); } catch (e) { return { problems: [problem('PLUGIN_CONTENT_FILE', 'data', e.message)] }; }
@@ -357,7 +364,8 @@ function composeContentSet({ registry, ids = [], checkDataOnly = false }) {
   const cache = caches.get(registry) ?? new Map(); caches.set(registry, cache);
   if (cache.has(cs)) return cache.get(cs);
   if (scripts.length) {
-    const report = preflightScripts(registry,scripts,{plugins:parts,settings});
+    // The one step that needs a child process: the driver decides whether to run it inline or await it.
+    const report = yield { registry, scripts, hashInput: { plugins: parts, settings } };
     if (report) return {problems:[problem(report.code,'scripts',report.message)]};
   }
   for (const [rel, body] of bodies) files[rel] = { sha256: nodeSha256(body), bytes: body.length };
@@ -395,8 +403,42 @@ export function contentSetFiles(set) {
   return new Map([...(buffers.get(set) ?? [])].map(([rel, body]) => [rel, { body: Buffer.from(body), sha256: nodeSha256(body), bytes: body.length }]));
 }
 
-/** C1 failures are data diagnostics, including invalid nested stage/translation input. */
+/** Run a composition from compile to a later, resolving each suspension with the given preflight. */
+const step = (gen, input) => gen.next(input);
+
+/**
+ * C1 failures are data diagnostics, including invalid nested stage/translation input.
+ *
+ * THIS FORM BLOCKS on the script preflight (spawnSync) and composes the whole set without pausing: it is for callers
+ * with no event loop to keep serving — the command line, the folder checks and the test suites. A server must await
+ * buildContentSetAsync instead, or a slow plugin's setup freezes every room for as long as the child takes.
+ * @returns {object} the set, or {problems}
+ */
 export function buildContentSet(options) {
-  try { return composeContentSet(options ?? {}); }
-  catch (e) { return { problems: [problem('PLUGIN_CONTENT_FORMAT', 'content', e.message)] }; }
+  try {
+    const gen = composeContentSet(options ?? {});
+    let r = step(gen);
+    while (!r.done) {
+      const { registry, scripts, hashInput } = r.value;
+      r = step(gen, preflightScriptsSync(registry, scripts, hashInput));
+    }
+    return r.value;
+  } catch (e) { return { problems: [problem('PLUGIN_CONTENT_FORMAT', 'content', e.message)] }; }
+}
+
+/**
+ * The same set, composed without blocking this thread: the script preflight's child process is awaited, so the server
+ * keeps answering every other socket while a slow plugin's setup runs. Everything else is identical.
+ * @returns {Promise<object>} the set, or {problems}
+ */
+export async function buildContentSetAsync(options) {
+  try {
+    const gen = composeContentSet(options ?? {});
+    let r = step(gen);
+    while (!r.done) {
+      const { registry, scripts, hashInput } = r.value;
+      r = step(gen, await preflightScripts(registry, scripts, hashInput));
+    }
+    return r.value;
+  } catch (e) { return { problems: [problem('PLUGIN_CONTENT_FORMAT', 'content', e.message)] }; }
 }

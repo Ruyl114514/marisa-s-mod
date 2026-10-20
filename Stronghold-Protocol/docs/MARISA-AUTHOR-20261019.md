@@ -65,7 +65,13 @@ node tools/plugin.mjs check marisa --strict
 ```
 
 安装目录 `plugins/marisa/` 应与可提交的 `mods/marisa-native/bundle/marisa/` 同步。
-本地启动仍使用 `scripts/start-marisa.cmd`。
+Windows 双击仓库根目录的 `启动魔理沙MOD.cmd`，或工程内的 `scripts/start-windows.bat` / `scripts/start-marisa.cmd`。
+这些入口会在首次启动时将源码自带的 bundle 安装到 `plugins/marisa/`，并开启 sandbox 脚本支持。
+游玩启动沿用已准备的素材，不运行官方素材清单重建；源码首次使用仍需先准备游戏素材。
+未手动指定 `SP_SCRIPT_PROBE_MS` 时，使用 20 秒初始化检查限时，避免 Windows 上较大的 MOD 被默认 5 秒限时误停用。
+创建房间与应用插件设置的页面请求等待 45 秒，覆盖冷启动时的内容组合和脚本检查；其他请求仍使用原有超时。
+没有本机策略文件时创建 `plugins/config.json`，使新房间默认启用 `marisa`；已有插件文件与策略不覆盖。
+在「选择模拟协议」界面（建房之前）可通过标题下的插件管理器检查、调整 MOD，选择会随创建的房间一起生效；进房后同一位置的标签只显示结果。已运行的服务需要先关闭启动窗口再重启，旧房间需重建。
 
 ## 本次验证
 

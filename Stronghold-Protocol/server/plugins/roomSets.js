@@ -44,7 +44,7 @@ export function createRoomSets({ registry, visual, contents, policy }) {
    * @param {string[]} ids
    * @param {{ scope?: 'room', settings?: Record<string, Record<string, unknown>>, replacing?: { cs?: string } | null }} [opts]
    */
-  function resolve(ids, { scope = 'room', settings = {}, replacing = null } = {}) {
+  async function resolve(ids, { scope = 'room', settings = {}, replacing = null } = {}) {
     const pol = policy?.get();
     if (pol && pol.rooms === 'off') return { error: ERR.PLUGIN_BLOCKED, detail: 'this server\'s rooms play the original game (plugins/config.json rooms: off)' };
     if (pol && pol.rooms === 'fixed') {
@@ -83,7 +83,7 @@ export function createRoomSets({ registry, visual, contents, policy }) {
     }
     let cset = null;
     if (contentIds.length) {
-      const c = contents.resolve(contentIds, { settings, replacing: replacing?.cs ?? null });
+      const c = await contents.resolve(contentIds, { settings, replacing: replacing?.cs ?? null });
       if (!c || !c.ok) return c && c.error ? c : { error: ERR.INTERNAL, detail: 'the content set failed' };
       cset = c.set;
     }

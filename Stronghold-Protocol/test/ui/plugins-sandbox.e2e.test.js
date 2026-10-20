@@ -16,15 +16,19 @@ test('two sandbox-script players start without consent and Worker battles verify
  const P=(await import('puppeteer-core')).default;
  const host=new Client(P,srv.url,'host',{prefix:'plugins-sandbox',w:1600,h:900}), guest=new Client(P,srv.url,'guest',{prefix:'plugins-sandbox',w:1600,h:900});
  t.after(async()=>{await host.close();await guest.close();});
- await host.open();await host.enter('凯尔希');await host.click('.mode-card','同盟模拟');await host.click('.diff-card','标准模拟');await host.click('.create-box button','创建同盟');
- const code=(await host.waitFor(s=>!!s.room?.code,'room created')).room.code;
- await guest.open();await guest.enter('阿米娅');await guest.click('.join-row input');await guest.page.keyboard.type(code);await guest.click('.join-row button','加入同盟');await guest.page.waitForSelector('.room-screen');
- await host.page.evaluate(()=>globalThis.__SP__.net.request('room.setPlugins',{plugins:[{id:'training'}]}));
- for(const c of [host,guest])await c.page.waitForFunction(()=>globalThis.__SP__.store.get().room?.content?.execution==='sandbox');
+ await host.open();await host.enter('凯尔希');
+ // 插件 (DESIGN §32 P1a): the room's plugins are picked on 选择模拟协议, and 创建 sends the choice (room.setPlugins)
  await host.click('[data-testid="plugin-tag"]');
  await host.page.waitForSelector('[data-plugin="training"]');
  assert.match(await host.page.$eval('[data-plugin="training"]',e=>e.textContent),/脚本（沙箱）/);
+ await host.click('[data-plugin="training"] [role="switch"]');
+ await host.page.waitForFunction(()=>document.querySelector('[data-plugin="training"] [role="switch"]')?.getAttribute('aria-checked')==='true');
  await host.click('.modal__actions button','完成');
+ await host.click('.mode-card','同盟模拟');await host.click('.diff-card','标准模拟');await host.click('.create-box button','创建同盟');
+ const code=(await host.waitFor(s=>!!s.room?.code,'room created')).room.code;
+ await guest.open();await guest.enter('阿米娅');await guest.click('.join-row input');await guest.page.keyboard.type(code);await guest.click('.join-row button','加入同盟');await guest.page.waitForSelector('.room-screen');
+ for(const c of [host,guest])await c.page.waitForFunction(()=>globalThis.__SP__.store.get().room?.content?.execution==='sandbox');
+ assert.match(await host.page.$eval('.room-screen [data-testid="plugin-tag"]',e=>e.textContent),/插件 ×1/);
  for(const c of [host,guest]) {
   assert.equal(await c.page.$('[data-testid="trusted-banner"]'),null);
   assert.equal(await c.page.evaluate(()=>globalThis.__SP__.store.get().room.content.trusted),undefined);

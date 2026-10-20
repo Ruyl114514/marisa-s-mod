@@ -170,6 +170,9 @@ function onWelcome(msg) {
     // how many unofficial plugins it has (P1a — absent: none; content.js fetches the catalogue only when there are some)
     installedPlugins: pluginCount(msg.content),
     installedNotices: msg.content?.notices === true,
+    // the plugins every new room is created with (server/lobby.js welcomeInfo `roomDefaults`): 选择模拟协议 shows that
+    // set in front of this browser's own choice (ui/pluginTag.js), so its tag tells the truth about the room 创建 makes
+    roomDefaults: Array.isArray(msg.roomDefaults) ? msg.roomDefaults.filter((id) => typeof id === 'string') : [],
     testMode: msg.testMode === true,
   });
   welcomeAt = Date.now();

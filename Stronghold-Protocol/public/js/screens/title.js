@@ -45,15 +45,24 @@ export { stripLoneSurrogates, sanitizeName, isValidName } from '../ui/playerName
 
 /**
  * Enter the game shell with a nickname (title → lobby).
+ * 测试模式 (MOD 新增, docs/DEV-MODE.md): `opts.test` reaches the lobby as `ui.testMode`, and its create sends
+ * `room.create { mode: 'solo', test: true }` — a solo room with infinite funds and no drawn bans. The flag lives only on
+ * the way from the title to that one create (like `ui.pendingJoin`); the room's own `room.state.test` carries it after.
  * @param {string} rawName
+ * @param {{ test?: boolean }} [opts]
  * @returns {boolean} false when the name is invalid
  */
-export function enterSession(rawName) {
+export function enterSession(rawName, opts = {}) {
   const name = sanitizeName(rawName);
   if (!name) return false;
+  const test = opts.test === true;
   identity.saveName(name);
   identity.setEntered(true);
-  store.set((s) => ({ me: { ...s.me, name }, session: { ...s.session, entered: true } }));
+  store.set((s) => ({
+    me: { ...s.me, name },
+    session: { ...s.session, entered: true },
+    ui: { ...s.ui, testMode: test },
+  }));
   net.setName(name);
   return true;
 }
@@ -197,6 +206,11 @@ export function TitleScreen() {
     if (!valid) { toast(t('请输入博士代号'), 'warn'); return; }
     enterSession(name);
   };
+  // 测试模式 (MOD 新增, docs/DEV-MODE.md): same nickname gate as 开始, then the lobby creates a solo test room
+  const startTest = () => {
+    if (!valid) { toast(t('请输入博士代号'), 'warn'); return; }
+    enterSession(name, { test: true });
+  };
 
   const online = conn.status === 'online' || conn.status === 'connected';
   const dotClass = online ? 'is-on' : conn.status === 'reconnecting' || conn.status === 'connecting' || conn.status === 'handshaking' ? 'is-warn' : 'is-bad';
@@ -257,6 +271,8 @@ export function TitleScreen() {
           placeholder=${t('输入你的代号（最多 {NAME_MAX_LEN} 字）', { NAME_MAX_LEN })} autoFocus=${!touchUi}
           onInput=${setName} onEnter=${start} />
         <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" disabled=${!valid} onClick=${start}>${t('开始')}<//>
+        <${Button} variant="secondary" size="lg" block=${true} icon="snow" disabled=${!valid} onClick=${startTest}>${t('测试模式')}<//>
+        <div class="title-test-hint"><span class="t-dim">${t('单人测试房间：资金无限、不会禁用角色，且无法联机')}</span></div>
         <div class="title-conn">
           <span class=${`status-dot ${dotClass}`}></span>
           <span>${STATUS_TEXT[conn.status] ? t(STATUS_TEXT[conn.status]) : conn.status}</span>

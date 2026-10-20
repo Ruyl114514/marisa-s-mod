@@ -3,30 +3,7 @@ import {html,Button} from './components.js';
 import {data,useData} from '../data.js';
 import {t} from '../../../shared/i18n.js';
 import {MOD_EXISTING_OPERATOR_IDS,MOD_ADDED_OPERATORS,MOD_BOND_IDS,MOD_NEW_BOND_MEMBERS,MOD_STRATEGY_IDS,enabledModBondMembers,normalizeModOptions,optionsFromSettings,settingsFromOptions} from '../../../shared/plugins/marisaProfile.js';
-const labels={
-  "char_171_bldsk": "华法琳",
-  "char_196_sunbr": "古米",
-  "char_003_kalts": "凯尔希",
-  "char_4179_monstr": "Mon3tr",
-  "char_4195_radian": "电弧",
-  "char_4228_closur": "可露希尔",
-  "char_4230_mcnist": "机械师",
-  "char_1015_aglna2": "予愿安洁莉娜",
-  "char_1052_kalts2": "凯尔希·思衡托",
-  "char_1051_headb2": "怒潮凛冬",
-  "char_188_helage": "赫拉格",
-  "char_x_marisa_makoto": "结城理",
-  "char_x_marisa_amiya3": "阿米娅",
-  "char_x_marisa_headbr": "凛冬",
-  "char_x_marisa_kormr": "虎狼丸",
-  "char_x_marisa_aigis": "埃癸斯",
-  "char_x_marisa_yukari": "岳羽由加莉",
-  "bond_x_marisa_rhodeShip": "罗德岛",
-  "bond_x_marisa_seesShip": "S.E.E.S",
-  "bond_x_marisa_uniteShip": "我们联合",
-  "band_x_marisa_kun": "鲲",
-  "band_x_marisa_unite": "怒潮凛冬"
-}; // i18n-ignore: fallback game names; loaded records provide localized names.
+const labels={"char_171_bldsk":"华法琳","char_196_sunbr":"古米","char_003_kalts":"凯尔希","char_4179_monstr":"Mon3tr","char_4195_radian":"电弧","char_4228_closur":"可露希尔","char_4230_mcnist":"机械师","char_1015_aglna2":"予愿安洁莉娜","char_1052_kalts2":"凯尔希·思衡托","char_1051_headb2":"怒潮凛冬","char_188_helage":"赫拉格","char_x_marisa_makoto":"结城理","char_x_marisa_amiya3":"阿米娅","char_x_marisa_headbr":"凛冬","char_x_marisa_kormr":"虎狼丸","char_x_marisa_aigis":"埃癸斯","char_x_marisa_yukari":"岳羽由加莉","bond_x_marisa_rhodeShip":"罗德岛","bond_x_marisa_seesShip":"S.E.E.S","bond_x_marisa_uniteShip":"我们联合","band_x_marisa_kun":"鲲","band_x_marisa_unite":"怒潮凛冬"}; // i18n-ignore: fallback game names; loaded records provide localized names.
 const defaultMembers=new Set([
   "bond_x_marisa_rhodeShip:char_171_bldsk",
   "bond_x_marisa_rhodeShip:char_1052_kalts2",

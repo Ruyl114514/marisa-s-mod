@@ -340,13 +340,18 @@ export function createStudio({ publicDir, pluginsDir, dataDir, registry, lobby =
   /**
    * The rooms the players `ids` host apply their plugins as they are on disk now (server/lobby.js refreshPlugins: a new
    * set only when the files changed) — a change their host was told about before the studio's page named the session.
+   * `refreshPlugins` is asynchronous (it resolves a content set, and a server's build awaits the script preflight
+   * child), so the promise is caught here: a room whose files are broken is the host's problem, not this page's.
    * @param {Set<string>} ids
    */
   function refreshRoomsOf(ids) {
     if (!lobby || typeof lobby.refreshPlugins !== 'function' || !(lobby.rooms instanceof Map)) return;
     for (const room of lobby.rooms.values()) {
       if (room.disposed || !room.content?.vs || !ids.has(room.hostId)) continue;
-      try { lobby.refreshPlugins(room); } catch (e) { log.warn?.(`[studio] applying the plugins of ${room.code} again failed: ${e?.message || e}`); }
+      try {
+        const again = lobby.refreshPlugins(room);
+        if (again && typeof again.catch === 'function') again.catch((e) => log.warn?.(`[studio] applying the plugins of ${room.code} again failed: ${e?.message || e}`));
+      } catch (e) { log.warn?.(`[studio] applying the plugins of ${room.code} again failed: ${e?.message || e}`); }
     }
   }
 
@@ -364,7 +369,10 @@ export function createStudio({ publicDir, pluginsDir, dataDir, registry, lobby =
       let humans;
       try { humans = room.activeHumans().length; } catch { continue; }
       if (!autoApply({ hostId: room.hostId, humans })) continue;
-      try { lobby.refreshPlugins(room); } catch (e) { log.warn?.(`[studio] applying the plugins of ${room.code} again failed: ${e?.message || e}`); }
+      try {
+        const again = lobby.refreshPlugins(room);
+        if (again && typeof again.catch === 'function') again.catch((e) => log.warn?.(`[studio] applying the plugins of ${room.code} again failed: ${e?.message || e}`));
+      } catch (e) { log.warn?.(`[studio] applying the plugins of ${room.code} again failed: ${e?.message || e}`); }
     }
   }
 

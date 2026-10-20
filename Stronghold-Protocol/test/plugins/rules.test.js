@@ -138,11 +138,11 @@ test('rules-only manifests load, hash and compose through the room summary and b
   assert.equal(loaded.cs, set.cs, 'browser includes rules when verifying the identity');
   const contents = createContentSets({ registry: f.registry });
   const rooms = createRoomSets({ registry: f.registry, contents });
-  const room = rooms.resolve(['alpha', 'beta']);
+  const room = await rooms.resolve(['alpha', 'beta']);
   assert.equal(room.ok, true, JSON.stringify(room));
   assert.deepEqual(room.set.rules, set.rules);
   f.put('beta', { permissions: [], rules: { unequip: 'official' } });
-  const conflict = rooms.resolve(['alpha', 'beta']);
+  const conflict = await rooms.resolve(['alpha', 'beta']);
   assert.equal(conflict.error, 'PLUGIN_RULE_CONFLICT');
   for (const name of ['alpha', 'beta', 'unequip']) assert.ok(conflict.detail.includes(name));
   f.put('alpha', { permissions: [], rules: { unequip: 'official' } });
@@ -176,7 +176,7 @@ test('the isolated match host takes prep rules from the verified content set rat
   const f = fixture(t);
   f.put('host-rules', { permissions: [], rules: { prepLoadout: 'prep' } });
   const contents = createContentSets({ registry: f.registry, vanillaData: getData() });
-  const resolved = contents.resolve(['host-rules']);
+  const resolved = await contents.resolve(['host-rules']);
   assert.equal(resolved.ok, true, JSON.stringify(resolved));
   const hosts = createMatchHosts({ contents, options: { matchOptions: { botRehearsal: 0, timerScale: 0.001 } } });
   t.after(() => hosts.close());

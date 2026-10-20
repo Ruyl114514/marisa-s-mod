@@ -109,13 +109,13 @@ test('a vanilla match of the same code opens no window at all (the part absent â
   h.m.dispose();
 });
 
-test('offers-only content changes room identity; option edits replace cs and old snapshots survive', t => {
+test('offers-only content changes room identity; option edits replace cs and old snapshots survive', async t => {
   const { set, registry, root } = pilotSet(t);
   const vanilla = buildContentSet({ registry, ids: [] });
   assert.notEqual(set.cs, vanilla.cs);
   assert.equal(set.plugins[0].id, 'pilot');
   const contents = createContentSets({ registry, vanillaData: getData() });
-  const room = createRoomSets({ registry, visual: null, contents, policy: null }).resolve(['pilot']);
+  const room = await createRoomSets({ registry, visual: null, contents, policy: null }).resolve(['pilot']);
   assert.equal(room.ok, true);
   assert.equal(room.set.cs, set.cs);
   assert.equal(room.set.plugins[0].id, 'pilot');
@@ -134,7 +134,7 @@ test('offers-only content changes room identity; option edits replace cs and old
 for (const transport of ['process', 'worker']) test(`offers reach real Match options, snapshots and g.offer in ${transport} host`, { timeout: 30000 }, async t => {
   const { registry } = pilotSet(t);
   const contents = createContentSets({ registry, vanillaData: getData() });
-  const resolved = contents.resolve(['pilot']); assert.ok(resolved.ok, JSON.stringify(resolved));
+  const resolved = await contents.resolve(['pilot']); assert.ok(resolved.ok, JSON.stringify(resolved));
   const hosts = createMatchHosts({ contents, options: { transport, matchOptions: { botRehearsal: 0 },
     matchModule: fileURLToPath(new URL('./fixtures/offerMatch.js', import.meta.url)) } });
   t.after(() => hosts.close());

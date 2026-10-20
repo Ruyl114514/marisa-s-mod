@@ -83,6 +83,9 @@ export const initialState = Object.freeze({
   installedPlugins: 0,
   // A language-only installation may have announcements without an unofficial plugin count.
   installedNotices: false,
+  // the plugins every new room of this server is created with (welcome.roomDefaults): what 选择模拟协议 shows before its
+  // host picks a set of their own (ui/pluginTag.js lobbyPlugins)
+  roomDefaults: [],
   session: { entered: false },
   room: null,
   // welcome.testMode (DESIGN §34.8). The server omits the key when the switch is off; the client cannot set it.
@@ -91,7 +94,10 @@ export const initialState = Object.freeze({
   ticker: [],
   emotes: [],
   clock: { offset: 0, rtt: null, synced: false },
-  ui: { pendingJoin: null, restoring: false, buildStale: false },
+  // ui.testMode (MOD 新增, docs/DEV-MODE.md): the title screen's 测试模式 entry set it — the lobby then creates the room
+  // with `{ mode: 'solo', test: true }` (infinite funds, no disabled characters, never joinable). Cleared once that room
+  // is created, so a later normal 创建同盟 is not silently a test room.
+  ui: { pendingJoin: null, testMode: false, restoring: false, buildStale: false },
 });
 
 /** The app-wide store singleton. */

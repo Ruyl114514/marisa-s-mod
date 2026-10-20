@@ -129,7 +129,7 @@ test('shopBias bondBias draws the active bond when that tier has one, and matche
   biased.m.dispose();
 });
 
-test('prepLoadout merges one submission in 休整期 and locks it after 准备', (t) => {
+test('prepLoadout merges one submission in 休整期 and locks it after 准备', async (t) => {
   const h = prep({ prepLoadout: 'prep' }, t);
   const m = h.m;
   const ps = h.ps('p_0');
@@ -150,7 +150,7 @@ test('prepLoadout merges one submission in 休整期 and locks it after 准备',
   const lobby = new Lobby({ registry: new SessionRegistry() });
   t.after(() => lobby.shutdown());
   const session = { playerId: 'p_0', name: 'Test', connected: true, ws: null };
-  ok(lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' }));
+  ok(await lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' }));
   const room = lobby.roomOf(session);
   room.content = { cs: m.cs, vanilla: false, rules: m.rules, plugins: [] };
   room.match = m;

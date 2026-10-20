@@ -339,14 +339,14 @@ test('notice catalogue hint reaches health and welcome, and is omitted when abse
   }
 });
 
-test('notices are not part of a content set hash', (t) => {
+test('notices are not part of a content set hash', async (t) => {
   const fx = fixture(t);
   const id = 'notehash';
   fx.put(id, { permissions: ['data.patch'], data: ['data/patch.json'] }, { 'data/patch.json': { patch: 1, ops: [] } });
   const a = buildContentSet({ registry: fx.registry, ids: [id] });
   assert.equal(a.problems.length, 0, JSON.stringify(a.problems));
   const sets = createContentSets({ registry: fx.registry, vanillaData: {} });
-  const selected = sets.resolve([id]);
+  const selected = await sets.resolve([id]);
   assert.equal(selected.ok, true);
   sets.hold(selected.set.cs);
   const stale = [];
@@ -364,7 +364,7 @@ test('notices are not part of a content set hash', (t) => {
     assert.equal(fx.registry.plugin(id).content.hash, snapshot, 'same gameplay snapshot');
     assert.deepEqual(b.plugins, a.plugins, 'same room-facing hashes');
     assert.deepEqual(stale, [], 'no gameplay-stale notification for catalogue-only changes');
-    assert.equal(sets.resolve([id]).set.cs, selected.set.cs);
+    assert.equal((await sets.resolve([id])).set.cs, selected.set.cs);
   }
   sets.release(selected.set.cs);
   sets.close();
@@ -390,7 +390,7 @@ test('registry checks theme files and delivers capped notices independently of r
   assert.equal(sets.hasNotices(), true, 'language plugins also advertise notices');
 });
 
-for (const mode of ['sandbox', 'trusted']) test(`${mode} script notice add/edit/remove keeps content identity and raw lock verification`, (t) => {
+for (const mode of ['sandbox', 'trusted']) test(`${mode} script notice add/edit/remove keeps content identity and raw lock verification`, async (t) => {
   const fx = scriptFixture(t, { mode });
   const source = 'export default sp => {};';
   fx.put('note-script', source);
@@ -400,7 +400,7 @@ for (const mode of ['sandbox', 'trusted']) test(`${mode} script notice add/edit/
   assert.equal(JSON.parse(a.scripts[0].manifestSource).notices, undefined);
   const sets = createContentSets({ registry: fx.registry, vanillaData: {} });
   t.after(() => sets.close());
-  const selected = sets.resolve(['note-script']);
+  const selected = await sets.resolve(['note-script']);
   sets.hold(selected.set.cs);
   const stale = [];
   sets.onStale((...args) => stale.push(args));

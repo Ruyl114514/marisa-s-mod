@@ -7,6 +7,8 @@
 //   * the concurrent limit (PLUGIN_BUSY) is checked before anything is built, the set the asking room gives up counted
 //     free; a refused set is not remembered;
 //   * what /cs/<cs16>/… serves and the bytes a match host checks.
+// resolve() is asynchronous (the script preflight is a child process): the injected builder here is synchronous, which
+// createContentSets awaits all the same.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -51,55 +53,55 @@ function harness({ maxSets = 4 } = {}) {
   return { sets, plugins, calls, breakNext: (on) => { next = on ? 'bad' : null; } };
 }
 
-test('the same plugins, in the same state, with the same settings, are not built again', () => {
+test('the same plugins, in the same state, with the same settings, are not built again', async () => {
   const { sets, plugins, calls } = harness();
-  const one = sets.resolve(['a']);
+  const one = await sets.resolve(['a']);
   assert.ok(one.ok, JSON.stringify(one));
-  assert.equal(sets.resolve(['a']).set, one.set, 'remembered');
+  assert.equal((await sets.resolve(['a'])).set, one.set, 'remembered');
   assert.deepEqual(calls, ['a']);
   plugins.a = { ...plugins.a, content: { hash: 'h1-changed' } };
-  const changed = sets.resolve(['a']);
+  const changed = await sets.resolve(['a']);
   assert.deepEqual(calls, ['a', 'a'], 'a changed file is built again');
   assert.notEqual(changed.set.cs, one.set.cs);
   plugins.a = { ...plugins.a, manifest: { ...plugins.a.manifest, version: '1.0.1' } };
-  sets.resolve(['a']);
+  await sets.resolve(['a']);
   assert.deepEqual(calls, ['a', 'a', 'a'], 'another manifest: built again');
   // settings as the builder reads them: undeclared keys are nothing; a declared one is
-  sets.resolve(['a'], { settings: { a: { x: 1 } } });
+  await sets.resolve(['a'], { settings: { a: { x: 1 } } });
   assert.equal(calls.length, 3, 'a key plugin a does not declare');
-  sets.resolve(['t']);
-  sets.resolve(['t'], { settings: { t: { x: 0, junk: 'a' } } });
-  sets.resolve(['t'], { settings: { t: { x: 12 } } });
+  await sets.resolve(['t']);
+  await sets.resolve(['t'], { settings: { t: { x: 0, junk: 'a' } } });
+  await sets.resolve(['t'], { settings: { t: { x: 12 } } });
   assert.deepEqual(calls.slice(3), ['t+{"x":0}'], 'the default, junk beside it, an out-of-range value: the same set');
-  sets.resolve(['t'], { settings: { t: { x: 3 } } });
+  await sets.resolve(['t'], { settings: { t: { x: 3 } } });
   assert.deepEqual(calls.slice(3), ['t+{"x":0}', 't+{"x":3}'], 'another declared value: built (normalized)');
 });
 
-test('a burst of requests with junk settings builds once; at the limit nothing is built; a refused set is not remembered', () => {
+test('a burst of requests with junk settings builds once; at the limit nothing is built; a refused set is not remembered', async () => {
   const { sets, calls } = harness({ maxSets: 1 });
-  for (let i = 0; i < 6; i++) assert.ok(sets.resolve(['a'], { settings: { a: { junk: `j${i}` } } }).ok);
+  for (let i = 0; i < 6; i++) assert.ok((await sets.resolve(['a'], { settings: { a: { junk: `j${i}` } } })).ok);
   assert.equal(calls.length, 1, 'six requests, one build');
-  const a = sets.resolve(['a']).set;
+  const a = (await sets.resolve(['a'])).set;
   sets.hold(a.cs);
-  for (const junk of ['x', 'y']) assert.equal(sets.resolve(['b'], { settings: { b: { junk } } }).error, ERR.PLUGIN_BUSY);
+  for (const junk of ['x', 'y']) assert.equal((await sets.resolve(['b'], { settings: { b: { junk } } })).error, ERR.PLUGIN_BUSY);
   assert.equal(calls.length, 1, 'refused before a build');
   assert.equal(sets.stats().builds, 1);
   sets.release(a.cs);
-  assert.ok(sets.resolve(['b']).ok, 'room again: built now');
+  assert.ok((await sets.resolve(['b'])).ok, 'room again: built now');
   assert.deepEqual(calls, ['a', 'b']);
 });
 
-test('a set whose manifest does not hash to its cs is never used; the limit; what is served', () => {
+test('a set whose manifest does not hash to its cs is never used; the limit; what is served', async () => {
   const { sets, breakNext } = harness({ maxSets: 1 });
   breakNext(true);
-  assert.equal(sets.resolve(['a']).error, ERR.INTERNAL);
+  assert.equal((await sets.resolve(['a'])).error, ERR.INTERNAL);
   breakNext(false);
-  const a = sets.resolve(['a']).set;
+  const a = (await sets.resolve(['a'])).set;
   sets.hold(a.cs);
-  const busy = sets.resolve(['b']);
+  const busy = await sets.resolve(['b']);
   assert.equal(busy.error, ERR.PLUGIN_BUSY);
-  assert.ok(sets.resolve(['b'], { replacing: a.cs }).ok, 'the set the asking room gives up is free');
-  assert.ok(sets.resolve(['a']).ok, 'a set already held is free');
+  assert.ok((await sets.resolve(['b'], { replacing: a.cs })).ok, 'the set the asking room gives up is free');
+  assert.ok((await sets.resolve(['a'])).ok, 'a set already held is free');
   // /cs/<cs16>/…: the manifest (no hash of its own: it names cs) and the data files with theirs
   const cs16 = a.cs.slice(0, 16);
   assert.equal(sets.file(cs16, 'index.json').sha256, null);

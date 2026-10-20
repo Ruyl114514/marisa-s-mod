@@ -2,13 +2,14 @@
 //   SP_E2E=1 node --test test/ui/plugins.e2e.test.js
 //
 // A server with a plugins folder of its own (art made on the spot: a red and a green 8 × 8 square; no file of the game):
-// the title screen says 「本服务器安装了 2 个插件」; in a co-op room both players read 原版 at the top; the host opens the
-// 插件 panel and switches the room plugin on — the other player's page now draws that operator's avatar from the plugin
-// (/p/…, the image loaded in its 干员调配 card) and reads 插件 ×1, while the room's cs stays the vanilla one. A personal
-// plugin nobody switched on changes nothing; switched on in the guest's 设置 → 外观插件 it changes the guest's page only
-// (kept in that browser, never the host's), on top of the room's art. The host switches the room plugin off: its art
-// leaves the guest's page (the personal one stays). No console / page errors, no failed request but the game's own art
-// when this checkout has none.
+// the title screen says 「本服务器安装了 2 个插件」; on 选择模拟协议 the tag reads 原版 and the host opens the 插件 panel
+// there, before any room exists — that switch is this browser's pre-selection, and 创建同盟 sends it (room.setPlugins)
+// right after room.create. The other player's page then draws that operator's avatar from the plugin (/p/…, the image
+// loaded in its 干员调配 card) and both read 插件 ×1 at the top of the room, while the room's cs stays the vanilla one; the
+// room's tag is read-only (no panel behind it). A personal plugin nobody switched on changes nothing; switched on in the
+// guest's 设置 → 外观插件 it changes the guest's page only (kept in that browser, never the host's), on top of the room's
+// art. The host drops the room plugin: its art leaves the guest's page (the personal one stays). No console / page
+// errors, no failed request but the game's own art when this checkout has none.
 // A match already drawn (the fast server's starter kit placed on the board): a personal plugin switched on during the
 // match changes the picture the piece already on the board draws (render/units.js retryAssets — the field view's
 // pieceArt introspection), and switched off brings the installation's back (DESIGN §32 P1a review round 2).
@@ -67,6 +68,17 @@ describe('cosmetic plugins in the browser (P1a)', { skip: !ENABLED && 'set SP_E2
       assert.match(await host.page.$eval('[data-testid="title-plugins"]', (e) => e.textContent), /本服务器安装了 2 个插件/);
       await host.shot('title');
       await host.enter('凯尔希');
+      // 插件 (DESIGN §32 P1a): the tag of 选择模拟协议, before any room exists — its panel writes this browser's choice and
+      // 创建同盟 sends it (room.setPlugins) right after room.create
+      assert.match(await host.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /原版/, 'host: 原版 before the room exists');
+      await host.click('[data-testid="plugin-tag"]');
+      await host.page.waitForSelector('[data-testid="plugin-panel"] [data-plugin="room-skin"]', { timeout: 10000 });
+      assert.equal(await host.page.$('[data-testid="plugin-panel"] [data-plugin="my-skin"]'), null, 'a personal-only plugin is not offered to the room');
+      await host.click('[data-plugin="room-skin"] button[role="switch"]');
+      await host.page.waitForFunction(() => document.querySelector('[data-plugin="room-skin"] button[role="switch"]')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
+      await host.shot('panel-lobby');
+      await host.click('.modal__actions button', '完成');
+      assert.match(await host.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /插件 ×1/, 'host: the choice shows before the room exists');
       await host.click('.mode-card', '同盟模拟');
       await host.click('.diff-card', '标准模拟');
       await host.click('.create-box button', '创建同盟');
@@ -77,26 +89,20 @@ describe('cosmetic plugins in the browser (P1a)', { skip: !ENABLED && 'set SP_E2
       await guest.page.keyboard.type(code);
       await guest.click('.join-row button', '加入同盟');
       await guest.page.waitForSelector('.room-screen', { timeout: 15000 });
+      // the room carries the host's choice (room.setPlugins right after room.create), and its own tag only reads it
+      await host.page.waitForFunction(() => (globalThis.__SP__.store.get().room?.content?.plugins || []).some((p) => p.id === 'room-skin'), { timeout: 20000 });
       for (const c of [host, guest]) {
         await c.page.waitForFunction(() => !!globalThis.__SP__.data.get('assets'), { timeout: 20000 });
-        assert.match(await c.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /原版/, `${c.label}: 原版 at the top`);
+        assert.match(await c.page.$eval('.room-screen [data-testid="plugin-tag"]', (e) => e.textContent), /插件 ×1/, `${c.label}: 插件 ×1 at the top of the room`);
         assert.doesNotMatch(String(await avatarOf(c, roomId)), /^\/p\//);
       }
+      assert.equal(await host.page.$('.room-screen [data-testid="plugin-tag"] button'), null, 'the room\'s tag opens no panel');
       const vanilla = await avatarOf(guest, roomId);
       const vanillaCs = await guest.page.evaluate(() => globalThis.__SP__.store.get().content?.vanilla);
 
-      // the host switches the room plugin on in the 插件 panel
-      await host.click('[data-testid="plugin-tag"]');
-      await host.page.waitForSelector('[data-testid="plugin-panel"] [data-plugin="room-skin"]', { timeout: 10000 });
-      assert.equal(await host.page.$('[data-testid="plugin-panel"] [data-plugin="my-skin"]'), null, 'a personal-only plugin is not offered to the room');
-      await host.click('[data-plugin="room-skin"] button[role="switch"]');
-      await host.page.waitForFunction(() => document.querySelector('[data-plugin="room-skin"] button[role="switch"]')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
-      await host.shot('panel-host');
-      await host.click('.modal__actions button', '完成');
-
       // the other player: the room's art, its avatar loaded in the 干员调配 card; 插件 ×1; the vanilla cs
       await guest.page.waitForFunction((k) => /^\/p\/room-skin\/[0-9a-f]{8}\/art\/red\.png$/.test(globalThis.__SP__.data.get('assets')?.chars?.[k]?.avatar || ''), { timeout: 20000 }, roomId);
-      assert.match(await guest.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /插件 ×1/);
+      assert.match(await guest.page.$eval('.room-screen [data-testid="plugin-tag"]', (e) => e.textContent), /插件 ×1/);
       const content = await guest.page.evaluate(() => globalThis.__SP__.store.get().room.content);
       assert.equal(content.cs, vanillaCs, 'art never changes a battle: the vanilla cs');
       assert.deepEqual(content.plugins.map((p) => p.id), ['room-skin']);
@@ -126,12 +132,13 @@ describe('cosmetic plugins in the browser (P1a)', { skip: !ENABLED && 'set SP_E2
       assert.doesNotMatch(String(await avatarOf(host, personalId)), /^\/p\//, 'the host\'s page never sees the guest\'s personal plugin');
       assert.equal(await host.page.evaluate(() => localStorage.getItem('sp.pref.cosmetics')), null);
 
-      // the host switches the room plugin off: its art leaves the guest's page, the personal one stays
-      await host.click('[data-testid="plugin-tag"]');
-      await host.click('[data-plugin="room-skin"] button[role="switch"]');
+      // the host switches the room plugin off: its art leaves the guest's page, the personal one stays. The tag of a room
+      // only reads the set (the host changes it on 选择模拟协议 before creating the room), so this asks the server
+      // directly — room.setPlugins of the host, before the match, is still exactly what the lobby sends after room.create.
+      await host.page.evaluate(() => globalThis.__SP__.net.request('room.setPlugins', { plugins: [] }));
       await guest.page.waitForFunction((k, v) => globalThis.__SP__.data.get('assets')?.chars?.[k]?.avatar === v, { timeout: 20000 }, roomId, vanilla);
       assert.match(String(await avatarOf(guest, personalId)), /^\/p\/my-skin\//);
-      assert.match(await guest.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /原版/);
+      assert.match(await guest.page.$eval('.room-screen [data-testid="plugin-tag"]', (e) => e.textContent), /原版/);
       await guest.shot('room-vanilla-again');
 
       // no errors; a failed request only for the game's own art when this checkout has none
@@ -166,14 +173,17 @@ describe('cosmetic plugins in the browser (P1a)', { skip: !ENABLED && 'set SP_E2
       assert.ok(loaded('/js/content.js') && loaded('/js/cosmetics.js'), 'the small parts load with the page');
       for (const u of lazy) assert.equal(loaded(u), false, `the title page does not load ${u}`);
       await c.enter('凯尔希');
-      await c.click('.mode-card', '同盟模拟');
-      await c.click('.diff-card', '标准模拟');
-      await c.click('.create-box button', '创建同盟');
-      await c.waitFor((st) => !!st.room?.code, 'room created');
+      // 插件 (DESIGN §32 P1a): the tag of 选择模拟协议, before any room exists — nothing to offer here
+      assert.match(await c.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /原版/);
       await c.click('[data-testid="plugin-tag"]');
       await c.page.waitForSelector('[data-testid="plugin-panel"]', { timeout: 10000 });
       assert.match(await c.page.$eval('[data-testid="plugin-panel"]', (e) => e.textContent), /本服务器没有可在房间中使用的插件/);
       await c.click('.modal__actions button', '完成');
+      await c.click('.mode-card', '同盟模拟');
+      await c.click('.diff-card', '标准模拟');
+      await c.click('.create-box button', '创建同盟');
+      await c.waitFor((st) => !!st.room?.code, 'room created');
+      assert.match(await c.page.$eval('.room-screen [data-testid="plugin-tag"]', (e) => e.textContent), /原版/);
       await c.click('.room-screen [data-testid="settings-btn"]');
       await c.page.waitForSelector('.set-list', { timeout: 10000 });
       assert.equal(await c.page.$('[data-testid="personal-plugins"]'), null, 'no 外观插件 section');

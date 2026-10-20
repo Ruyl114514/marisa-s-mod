@@ -2,7 +2,8 @@
 //   SP_E2E=1 node --test test/ui/plugins-content.e2e.test.js   (SP_E2E_VERBOSE=1: the server's log too)
 //
 // A server with a data plugin of its own (bond-def: a bond value patched — no file of the game) and two browsers: the
-// host switches it on in the room's 插件 panel → both pages download the room's content set, check every file's bytes and
+// host switches it on in 选择模拟协议's 插件 panel (before the room exists — the choice travels with room.create), so the
+// room both players enter already carries it → both pages download the room's content set, check every file's bytes and
 // the manifest against the room's cs (the seats read 插件内容就绪; the tag 非官方) and show its data (the patched bond in
 // data.get('bonds')); the guest readies, the host starts → the match runs in the set's match host worker (the briefing's
 // and the HUD's unofficial marks) — the host's page is the authority of its own battle: it simulates on the set's data and
@@ -42,6 +43,15 @@ describe('a room\'s content set in the browser (P1c)', { skip: !ENABLED && 'set 
     try {
       await host.open();
       await host.enter('凯尔希');
+      // the host picks the data plugin on 选择模拟协议 — its panel writes this browser's choice, 创建同盟 sends it
+      await host.click('[data-testid="plugin-tag"]');
+      await host.page.waitForSelector('[data-testid="plugin-panel"] [data-plugin="bond-def"]', { timeout: 10000 });
+      assert.match(await host.page.$eval('[data-plugin="bond-def"]', (e) => e.textContent), /改变玩法/);
+      await host.click('[data-plugin="bond-def"] button[role="switch"]');
+      await host.page.waitForFunction(() => document.querySelector('[data-plugin="bond-def"] button[role="switch"]')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
+      await host.shot('panel-lobby');
+      await host.click('.modal__actions button', '完成');
+      assert.match(await host.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /插件 ×1/);
       await host.click('.mode-card', '同盟模拟');
       await host.click('.diff-card', '标准模拟');
       await host.click('.create-box button', '创建同盟');
@@ -54,15 +64,8 @@ describe('a room\'s content set in the browser (P1c)', { skip: !ENABLED && 'set 
       await guest.page.waitForSelector('.room-screen', { timeout: 15000 });
       const vanillaBond = await guest.page.evaluate(async () => (await globalThis.__SP__.data.load('bonds'))?.deputShip?.bb?.base_def);
 
-      // the host switches the data plugin on in the 插件 panel
-      await host.click('[data-testid="plugin-tag"]');
-      await host.page.waitForSelector('[data-testid="plugin-panel"] [data-plugin="bond-def"]', { timeout: 10000 });
-      assert.match(await host.page.$eval('[data-plugin="bond-def"]', (e) => e.textContent), /改变玩法/);
-      await host.click('[data-plugin="bond-def"] button[role="switch"]');
-      await host.page.waitForFunction(() => document.querySelector('[data-plugin="bond-def"] button[role="switch"]')?.getAttribute('aria-checked') === 'true', { timeout: 10000 });
-      await host.page.waitForFunction(() => /通过校验/.test(document.querySelector('[data-testid="content-state"]')?.textContent || ''), { timeout: 30000 });
-      await host.shot('panel');
-      await host.click('.modal__actions button', '完成');
+      // the room carries the host's choice, and its own tag reads 非官方
+      assert.match(await host.page.$eval('.room-screen [data-testid="plugin-tag"]', (e) => e.textContent), /非官方/);
 
       // both pages: the set downloaded and checked, its data shown, every seat 插件内容就绪, the tag 非官方
       const room = await guest.page.evaluate(() => globalThis.__SP__.store.get().room);
@@ -73,7 +76,7 @@ describe('a room\'s content set in the browser (P1c)', { skip: !ENABLED && 'set 
         await c.page.waitForFunction(() => [...document.querySelectorAll('[data-testid="seat-content"]')].length === 2
           && [...document.querySelectorAll('[data-testid="seat-content"]')].every((e) => /插件内容就绪/.test(e.textContent)), { timeout: 15000 });
         assert.equal(await c.page.evaluate(() => globalThis.__SP__.data.get('bonds')?.deputShip?.bb?.base_def), 0.3, `${c.label}: the room's data`);
-        assert.match(await c.page.$eval('[data-testid="plugin-tag"]', (e) => e.textContent), /非官方/);
+        assert.match(await c.page.$eval('.room-screen [data-testid="plugin-tag"]', (e) => e.textContent), /非官方/);
       }
       assert.notEqual(vanillaBond, 0.3);
       await guest.shot('room-guest');

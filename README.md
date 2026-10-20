@@ -131,6 +131,6 @@ S.E.E.S ｜ 3 / 6 档
 
 本分支将原作者本次大更新接入已有原生插件管理器，保留游戏整体架构。可分别选择干员原版／MOD、商店／自选／停用，以及三条盟约与两种策略。
 
-源码在 [Stronghold-Protocol](Stronghold-Protocol/)，本地入口为 [scripts/start-marisa.cmd](Stronghold-Protocol/scripts/start-marisa.cmd)。首次运行仍需准备依赖和游戏素材；旧累计 ZIP 不包含本次更新。
+源码在 [Stronghold-Protocol](Stronghold-Protocol/)，双击根目录的 [启动魔理沙MOD.cmd](启动魔理沙MOD.cmd) 即可。首次启动自动安装源码自带的 MOD，新房间默认启用，房主可在「选择模拟协议」界面的插件管理器中调整。首次运行仍需准备依赖和游戏素材；旧累计 ZIP 不包含本次更新。
 
 [适配说明、来源与定向验证](Stronghold-Protocol/docs/MARISA-AUTHOR-20261019.md)。

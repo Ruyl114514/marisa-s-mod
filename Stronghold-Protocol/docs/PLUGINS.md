@@ -45,8 +45,8 @@ zip, can be imported as the plugins it can become (§16). Install local zips or 
 | `server/packs.js`, `shared/packs.js` | the content-pack API of 0.2.0, kept (compatibility export; the language-pack index) |
 | `public/js/content.js` | the browser: the room's visual set and the player's personal plugins, fetched, checked and laid over the art manifest |
 | `public/js/cosmetics.js` | the cosmetic layers every screen draws through (small: the title page carries it; `shared/plugins/visual.js` loads with the first set) |
-| `public/js/ui/pluginTag.js` | the room's 插件 tag and the small facts the screens show (the panel loads when the tag is tapped) |
-| `public/js/ui/pluginPanel.js` | the room's 插件 panel and the title screen's list of the server's plugins — loaded when one opens |
+| `public/js/ui/pluginTag.js` | the 插件 tag the protocol select shows (and the room's read-only twin) and the small facts the screens show; the panel's pre-selection lives here (`lobbyPlugins`, pref `lobby-plugins`) |
+| `public/js/ui/pluginPanel.js` | the 插件 panel and the title screen's list of the server's plugins — loaded when one opens |
 | `public/studio/` | the studio's page (§15): `index.html`, `studio.css`, `js/` (the shell, `editors/` one module per template, `preview/` — the game's own renderer and components) |
 | `schemas/plugin.schema.json`, `schemas/overlay.schema.json` | JSON Schema (2020-12) of `plugin.json` and of the asset overlay, for editors and AI agents (§15) |
 | `tools/plugin.mjs` | `list`, `check` (in plain words, `--json`), `pack` (`--zip`), `new`, `test`, `errors`, `surface`, `import-forge`, `install`, `catalog` |
@@ -58,7 +58,8 @@ zip, can be imported as the plugins it can become (§16). Install local zips or 
 - **The original game is always the default.** A room plays the vanilla content unless its host chooses plugins (P1c);
   the golden results, DESIGN and the fidelity checks cover the original content only.
 - **Plugins are marked unofficial** wherever they are shown — the catalogue (`unofficial: true` on every class but
-  `lang`), the title screen (「本服务器安装了 N 个插件」), the room (「原版」 / 「插件 ×N」, the panel's 非官方 marks),
+  `lang`), the title screen (「本服务器安装了 N 个插件」), the protocol select (「原版」 / 「插件 ×N」, the panel's 非官方
+  marks), the room (the same tag, read-only),
   the diagnostics (`content: … cosmetic vs=… plugins=…`, `MODDED …` for gameplay plugins), and with gameplay plugins
   the briefing, the HUD corner, the result and the statistics (such matches stay out of the overview by default; a match
   with cosmetic plugins only is still the original game — §9, §11).
@@ -447,11 +448,18 @@ clip data — never a URL): the same identity inputs and writes give the same `v
   (a set is known once a room resolved it, or the catalogue named a plugin's own; a room holds its set while it uses it,
   of the others the last 256 are kept [ASSUMED]; a document is built once however many ask).
 
-**A room's plugins.** The room's top bar shows 「原版」 or 「插件 ×N」; it opens the 插件 panel (`public/js/ui/pluginPanel.js`):
-the server's cosmetic plugins of scope `room`, with the host's switches (read-only for the other players and the
-spectators, and during a match), versions, authors, sizes, 非官方 marks, 「自动」 on one switched on because another needs
-it, a note for one made for other game versions (a cosmetic plugin is still usable) and the override warnings. A switch
-sends `room.setPlugins { plugins: [{ id }] }` (host, before the match; like a difficulty change it un-readies the others —
+**A room's plugins.** The protocol select (「选择模拟协议」) shows 「原版」 or 「插件 ×N」 under its title; it opens the 插件
+panel (`public/js/ui/pluginPanel.js`): the server's plugins of scope `room`, with the switches, versions, authors, sizes,
+非官方 marks, 「自动」 on one switched on because another needs it, a note for one made for other game versions (a
+cosmetic plugin is still usable) and the override warnings. There the switch is a **pre-selection**: the panel edits
+`ui/pluginTag.js`'s `lobbyPlugins` (pref `lobby-plugins`, so it survives a reload) and sends nothing; the room adopts it
+when it is created — `screens/lobby.js`'s `create()` sends `room.setPlugins { plugins: [{ id, settings? }] }` right after
+`room.create`, trimmed to the ids the catalogue still offers (`lobbySelectionFor`: a plugin removed since would have the
+whole set refused) and only when this browser has a choice of its own. The panel lists the server's `default` set
+(`welcome.roomDefaults`) until the player picks something, so a host who never opens it gets exactly the policy's
+defaults; 「恢复默认」 drops the choice again. Inside a room the same tag is read-only (`PluginTagStatic`, no panel): the
+set is chosen from the protocol select, before creating the room.
+A switch sends `room.setPlugins { plugins: [{ id }] }` (host, before the match; like a difficulty change it un-readies the others —
 not when only the 「自动」 marks change; the heavy rate-limit bucket): the server closes the set over the plugins'
 `requires`, refuses conflicts, a cycle, a plugin of another class or scope, and a set over 300 MB of art or whose
 references copy over 4 MB of the art manifest [ASSUMED] (`PLUGIN_UNKNOWN`, `PLUGIN_BLOCKED`, `PLUGIN_DEPENDENCY`,
@@ -489,7 +497,7 @@ in `/healthz` (which every page reads at once: the build guard) and in `welcome`
 are some; the title screen's 「本服务器安装了 N 个插件」 is that count, and the catalogue is fetched only then, when
 something needs it (the title's list, the 插件 panel, 设置's 外观插件, a switched-on personal plugin). So a page of a server
 without plugins makes no request more than 0.2.6's but for three small modules at start (`public/js/content.js`,
-`public/js/cosmetics.js` — the layers —, `public/js/ui/pluginTag.js` — the room's tag); the panel
+`public/js/cosmetics.js` — the layers —, `public/js/ui/pluginTag.js` — the protocol select's tag); the panel
 (`public/js/ui/pluginPanel.js`) loads when it opens, what checks and composes a set (`shared/plugins/visual.js`) with
 the first set, the load-order function (`shared/plugins/order.js`) with the catalogue, and the asset store
 (`public/js/assets.js`) with the first match, as in 0.2.6.
@@ -866,6 +874,7 @@ same.
 
 ```js
 const set = buildContentSet({ registry, ids: ['data-demo'] }); // or [{id, settings}]
+// on a server, await buildContentSetAsync({ registry, ids }) instead: same set, without blocking the event loop
 // success: {cs, vanilla, plugins:[{id,version,hash}], data, files:{rel:{sha256,bytes}}, modes, problems:[],
 //           index, settings, warnings, kitted}
 // refusal: {problems} only — no cs and no partial data
@@ -1129,14 +1138,20 @@ export default function setup(sp) {
 by battle, never in a module variable. Child hosts and browsers run setup in the composition's
 resolved load order. While composing a set, a disposable child probes each plugin's registrations (5 s default ceiling per
 uncached plugin (`SP_SCRIPT_PROBE_MS`) [ASSUMED]). The parent combines the registration reports in load order and rejects conflicts.
-The probe uses SIGKILL on timeout; spawnSync waits for the child to exit before composition returns a failure.
-Completed reports, including script errors, are cached per registry by plugin id + lock hash + actual descriptor hash + normalized
+The probe uses SIGKILL on timeout; the server's driver awaits the child, so the process keeps serving rooms while a
+slow setup runs. Completed reports, including script errors, are cached per registry by plugin id + lock hash + actual descriptor hash + normalized
 settings (256 recent results [ASSUMED]). Timeouts, killed children, spawn errors and missing reports are not cached:
 reapplying the same settings retries the preflight. Changing settings or executable bytes requires another probe. This also
 prevents a stale or missing lock in an explicit CLI test from reusing another source's result.
-C1 remains synchronous: **the lobby pauses during each uncached probe**, including rooms without plugins. Several
-uncached plugins add their pauses together. Moving to async spawn requires coordinating the C1 builder, content/room
-set resolvers, lobby and studio/CLI callers; this step preserves their synchronous contracts. The HTTP/lobby process
+Two drivers share one composition generator (`server/plugins/contentSet.js`): `buildContentSetAsync` awaits the probe and
+is what a server uses, `buildContentSet` runs it inline (spawnSync) for the command line, the folder checks and the test
+suites, which have no event loop to keep serving. Within one content set, concurrent requests share a single build
+(`contentSets.resolve`'s in-flight map), so a warm-up and the first room asking for the default set build it once.
+`startServer` warms the policy's default set in the background once it is listening (`server/plugins/warmup.js`, on by
+default, off under `node --test` unless `warm: true`): the set is cached before the first `room.create` needs it, which
+turns a multi-second first room into the same few milliseconds as any other. The remaining synchronous stretch is one
+plugin's own documents (a MOD's profile table can be megabytes), so a warm-up still costs the boot a pause; `srv.warming`
+is the promise to await (tests, probes) and what `close()` waits for. The HTTP/lobby process
 never imports author modules. Actual duplicate registrations, including computed ids and
 normal/elite chess aliases, fail composition with `PLUGIN_SCRIPT_CONFLICT`. [ASSUMED] `overrides: [<official kit id>]`
 allows replacing an official kit; it never allows overwriting another plugin's registration. Vanilla registries stay

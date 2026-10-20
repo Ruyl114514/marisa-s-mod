@@ -1,12 +1,14 @@
 @echo off
 rem Stronghold Protocol - double-click to start (Windows). Docs: docs\DEPLOY.md
-rem Checks Node.js, installs dependencies on the first run, runs tools\setup.mjs (art download / resume),
-rem starts the server, prints the LAN addresses and opens the browser. Extra arguments are passed to
+rem Checks Node.js, installs dependencies and the bundled Marisa MOD on the first run, keeps prepared art,
+rem starts the sandbox server, prints the LAN addresses and opens the browser. Extra arguments are passed to
 rem scripts\launch.mjs, e.g.:  start-windows.bat --port 3001 --no-local
 chcp 65001 >nul
 setlocal EnableExtensions
 title 卫戍协议：盟约 - Stronghold Protocol
 cd /d "%~dp0.."
+rem The Marisa bundle needs more than the stock 5-second SES preflight on some Windows PCs.
+if not defined SP_SCRIPT_PROBE_MS set "SP_SCRIPT_PROBE_MS=20000"
 
 where node >nul 2>nul
 if errorlevel 1 goto :nonode
@@ -19,7 +21,11 @@ if not exist "node_modules\ws\package.json" (
   if errorlevel 1 goto :fail
 )
 
-node scripts\launch.mjs %*
+rem 源码仓库里才需要装 MOD 插件本体（从 mods/marisa-native/bundle/marisa 拷到 plugins/marisa）；
+rem 完整包里 plugins/marisa 已经就位，这一步什么也不做（脚本自己会判断）。
+if exist "scripts\install-marisa.mjs" node scripts\install-marisa.mjs
+if errorlevel 1 goto :fail
+node scripts\launch.mjs --no-setup --scripts sandbox %*
 if errorlevel 1 goto :fail
 exit /b 0
 

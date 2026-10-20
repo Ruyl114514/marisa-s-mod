@@ -14,11 +14,10 @@ test('new alliance and strategy settings sync with operator routes before a veri
  const P=(await import('puppeteer-core')).default;
  const host=new Client(P,srv.url,'host',{prefix:'marisa-native',w:1600,h:900}), guest=new Client(P,srv.url,'guest',{prefix:'marisa-native',w:1600,h:900});
  t.after(async()=>{await host.close();await guest.close();});
- await host.open();await host.enter('凯尔希');await host.click('.mode-card','同盟模拟');await host.click('.diff-card','标准模拟');await host.click('.create-box button','创建同盟');
- const code=(await host.waitFor(s=>!!s.room?.code,'room created')).room.code;
- await guest.open();await guest.enter('阿米娅');await guest.click('.join-row input');await guest.page.keyboard.type(code);await guest.click('.join-row button','加入同盟');await guest.page.waitForSelector('.room-screen');
- await host.page.evaluate(()=>globalThis.__SP__.net.request('room.setPlugins',{plugins:[{id:'marisa'}]}));
- for(const c of [host,guest])await c.page.waitForFunction(()=>globalThis.__SP__.store.get().room?.content?.execution==='sandbox');
+ // 插件 (DESIGN §32 P1a): the manager lives on 选择模拟协议 — the tag opens it before the room exists, the switches write
+ // this browser's choice, and 创建同盟 sends that choice (room.setPlugins) right after room.create.
+ await host.open();await host.enter('凯尔希');
+ await host.page.waitForFunction(()=>globalThis.__SP__.store.get().roomDefaults?.includes('marisa'));
  await host.click('[data-testid="plugin-tag"]');
  await host.page.waitForSelector('[data-plugin="marisa"]');
  assert.match(await host.page.$eval('[data-plugin="marisa"]',e=>e.textContent),/脚本（沙箱）/);
@@ -28,9 +27,9 @@ test('new alliance and strategy settings sync with operator routes before a veri
  const uniteBand='[data-testid="marisa-settings"] label[title="band_x_marisa_unite"] input';
  await host.page.click(sees);await host.page.click(uniteBand);
  await host.click('[data-testid="marisa-settings"] button','应用设置');
- for(const client of [host,guest])await client.page.waitForFunction(()=>{
-  const settings=globalThis.__SP__.store.get().room.content.plugins.find(plugin=>plugin.id==='marisa')?.settings;
-  return settings?.sees===false&&settings?.uniteBand===false;
+ await host.page.waitForFunction(()=>{
+  const s=globalThis.__SP__.store.get();
+  return s.roomDefaults?.includes('marisa') && localStorage.getItem('sp.pref.lobby-plugins')!==null;
  });
  await host.page.click(sees);await host.page.click(uniteBand);
  const route='[data-testid="marisa-settings"] .mod-manager__list--operators select';
@@ -40,14 +39,24 @@ test('new alliance and strategy settings sync with operator routes before a veri
   await host.page.waitForFunction(()=>!document.querySelector('[data-testid="marisa-settings"] button[type="submit"]').disabled);
   await host.page.$eval('[data-testid="marisa-settings"] button[type="submit"]',e=>e.scrollIntoView({block:'center'}));
   await host.click('[data-testid="marisa-settings"] button','应用设置');
-  for(const c of [host,guest])await c.page.waitForFunction((m,a)=>{
-   const p=globalThis.__SP__.store.get().room.content.plugins.find(p=>p.id==='marisa');
-   return p?.settings?.add_makoto===m&&p?.settings?.add_amiya3===a;
+  await host.page.waitForFunction((m,a)=>{
+   const kept=JSON.parse(localStorage.getItem('sp.pref.lobby-plugins')||'[]').find(e=>e.id==='marisa');
+   return kept?.settings?.add_makoto===m&&kept?.settings?.add_amiya3===a;
   },{timeout:30000},makoto,amiya);
  }
  await host.page.screenshot({path:ROOT+'/test/e2e/out/marisa-native-manager.png'});
-
  await host.click('.modal__actions button','完成');
+ // the tag of 选择模拟协议 now says what the room will carry
+ assert.match(await host.page.$eval('[data-testid="plugin-tag"]',e=>e.textContent),/插件 ×1/);
+ await host.click('.mode-card','同盟模拟');await host.click('.diff-card','标准模拟');await host.click('.create-box button','创建同盟');
+ const code=(await host.waitFor(s=>!!s.room?.code,'room created')).room.code;
+ await guest.open();await guest.enter('阿米娅');await guest.click('.join-row input');await guest.page.keyboard.type(code);await guest.click('.join-row button','加入同盟');await guest.page.waitForSelector('.room-screen');
+ for(const c of [host,guest])await c.page.waitForFunction(()=>globalThis.__SP__.store.get().room?.content?.execution==='sandbox');
+ // the room carries the manager's settings, for both players
+ for(const c of [host,guest])await c.page.waitForFunction(()=>{
+  const s=globalThis.__SP__.store.get().room.content.plugins.find(p=>p.id==='marisa')?.settings;
+  return s?.sees===false&&s?.uniteBand===false&&s?.add_makoto==='diy'&&s?.add_amiya3==='diy';
+ },{timeout:30000});
  for(const c of [host,guest]) {
   assert.equal(await c.page.$('[data-testid="trusted-banner"]'),null);
   assert.equal(await c.page.evaluate(()=>globalThis.__SP__.store.get().room.content.trusted),undefined);

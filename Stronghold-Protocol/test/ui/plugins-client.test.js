@@ -23,6 +23,7 @@ import {
 } from '../../public/js/content.js';
 import { ERR } from '../../shared/constants.js';
 import { roomPluginFacts, nextChoice, sizeText, pluginTagText, pluginMicro, companionCosmeticHints } from '../../public/js/ui/pluginPanel.js';
+import { lobbyFacts, lobbySelection, lobbySelectionFor, lobbyPlugins, setLobbyPlugins, factsText, roomPlugins } from '../../public/js/ui/pluginTag.js';
 import { visualHashOf, writesHashOf, VISUAL_HASH_VERSION } from '../../shared/plugins/visual.js';
 import { sha256Hex } from '../../shared/sha256.js';
 
@@ -429,6 +430,53 @@ describe('the 插件 panel (ui/pluginPanel.js) and the room screen', () => {
     assert.equal(pluginMicro({ id: 'a', version: '1.0.0', artBytes: 4096 }), 'a · v1.0.0 · 4 KB');
   });
 
+  test('the lobby choice: the same facts before a room exists, room.setPlugins\' shape, the server\'s defaults until one picks', () => {
+    // 插件 (DESIGN §32 P1a): on 选择模拟协议 the panel edits this browser's choice instead of asking a server; the
+    // choice is what create() sends as room.setPlugins right after room.create.
+    const offered = [{ id: 'skin', class: 'cosmetic', status: 'loaded' }, { id: 'bond-def', class: 'content', status: 'loaded', version: '1.0.0' }];
+    const none = lobbyFacts({ entries: null, defaults: null, offered });
+    assert.deepEqual([none.count, none.chosen, none.editable, none.inMatch, none.modded], [0, [], true, false, false], 'nothing picked: 原版, and it is this player\'s to change');
+    assert.equal(factsText(none), '原版');
+    const fromDefaults = lobbyFacts({ entries: null, defaults: ['bond-def'], offered });
+    assert.deepEqual([fromDefaults.count, fromDefaults.chosen, fromDefaults.modded], [1, ['bond-def'], true], 'the server\'s default set until this browser picks');
+    assert.equal(factsText(fromDefaults), '插件 ×1');
+    const picked = lobbyFacts({ entries: [{ id: 'skin' }, { id: 'bond-def', settings: { defense: 0.4 } }], defaults: ['bond-def'], offered });
+    assert.deepEqual([picked.count, picked.chosen, picked.modded], [2, ['skin', 'bond-def'], true]);
+    assert.equal(picked.plugins[1].class, 'content', 'the class comes from the catalogue, so 非官方 shows before the room exists');
+    assert.deepEqual(picked.plugins[1].settings, { defense: 0.4 });
+    assert.equal(lobbyFacts({ entries: [{ id: 'gone' }], defaults: null, offered }).modded, false, 'one the catalogue lacks has no class');
+    // room.setPlugins takes `[{ id, settings? }]` (shared/protocol.js); no choice at all = null, the server's own default set
+    assert.deepEqual(lobbySelection([{ id: 'skin' }, { id: 'bond-def', settings: { defense: 0.4 } }]), [{ id: 'skin' }, { id: 'bond-def', settings: { defense: 0.4 } }]);
+    assert.deepEqual(lobbySelection(['skin']), [{ id: 'skin' }], 'a bare id is enough');
+    assert.equal(lobbySelection(null), null);
+    assert.deepEqual(lobbySelection([{ id: 'BAD ID' }, ''].filter(() => true)), [], 'nothing that is not a plugin id survives');
+    // a pre-selection outlives the servers it was made on: the whole set is refused for one id the server dropped, so it
+    // goes trimmed to what the catalogue offers — and untouched while that is not known (null), as room.setPlugins always took
+    const stale = [{ id: 'skin' }, { id: 'gone', settings: { defense: 0.4 } }, { id: 'bond-def' }];
+    assert.deepEqual(lobbySelectionFor(stale, offered), [{ id: 'skin' }, { id: 'bond-def' }], 'the ids this server has');
+    assert.deepEqual(lobbySelectionFor(stale, null), lobbySelection(stale), 'no catalogue read: it goes as it is');
+    assert.equal(lobbySelectionFor(null, offered), null, 'no choice of this browser\'s: still the server\'s default set');
+    // the store: what the panel writes, what create() reads, kept as a preference of this browser
+    const before = lobbyPlugins.get().entries;
+    try {
+      setLobbyPlugins([{ id: 'skin' }, { id: 'bond-def', settings: { defense: 0.4 } }]);
+      assert.deepEqual(lobbyPlugins.get().entries, [{ id: 'skin' }, { id: 'bond-def', settings: { defense: 0.4 } }]);
+      setLobbyPlugins([{ id: 'skin', settings: {} }]);
+      assert.deepEqual(lobbyPlugins.get().entries, [{ id: 'skin' }], 'empty settings are not kept');
+      setLobbyPlugins(null);
+      assert.equal(lobbyPlugins.get().entries, null, 'back to the server\'s default set');
+    } finally { setLobbyPlugins(before); }
+    // roomPlugins: the loaded cosmetic and gameplay plugins of scope room, the catalogue's order independent
+    const cat = [
+      { id: 'b', class: 'content', status: 'loaded', scope: ['room'] },
+      { id: 'a', class: 'cosmetic', status: 'loaded', scope: ['room'] },
+      { id: 'c', class: 'content', status: 'failed', scope: ['room'] },
+      { id: 'd', class: 'content', status: 'loaded', scope: ['personal'] },
+      { id: 'e', class: 'ui', status: 'loaded', scope: ['room'] },
+    ];
+    assert.deepEqual(roomPlugins(cat).map((p) => p.id), ['a', 'b']);
+  });
+
   test('a vanilla page loads none of the panel, the asset store or what composes a set at start (the import graph of main.js)', () => {
     const seen = new Set();
     const walk = (rel) => {
@@ -447,9 +495,13 @@ describe('the 插件 panel (ui/pluginPanel.js) and the room screen', () => {
     }
   });
 
-  test('the room screen shows the tag under its title; the settings show 外观插件; the texts are in every pack', () => {
+  test('the lobby screen shows the tag under its title, the room reads it; the settings show 外观插件; the texts are in every pack', () => {
+    // 插件 (DESIGN §32 P1a): the tag moved to 选择模拟协议 — a room's plugins are picked before the room exists — and the
+    // room screen only reads the result (a static tag, no panel behind it).
+    const lobbySrc = readFileSync(path.join(ROOT, 'public/js/screens/lobby.js'), 'utf8');
+    assert.match(lobbySrc, /<\$\{PluginTag\} lobby=\$\{true\} myId=\$\{me\.playerId\} defaults=\$\{roomDefaults\} \/>/);
     const roomSrc = readFileSync(path.join(ROOT, 'public/js/screens/room.js'), 'utf8');
-    assert.match(roomSrc, /<\$\{PluginTag\} room=\$\{room\} myId=\$\{me\.playerId\} \/>/);
+    assert.match(roomSrc, /<\$\{PluginTagStatic\} room=\$\{room\} \/>/);
     const settingsSrc = readFileSync(path.join(ROOT, 'public/js/ui/settings.js'), 'utf8');
     assert.match(settingsSrc, /<\$\{CosmeticSection\} \/>/);
     for (const lang of ['en', 'ja', 'ko', 'zh-TW']) {

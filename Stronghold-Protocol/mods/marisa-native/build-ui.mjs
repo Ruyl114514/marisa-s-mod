@@ -40,7 +40,7 @@ import {html,Button} from './components.js';
 import {data,useData} from '../data.js';
 import {t} from '../../../shared/i18n.js';
 import {MOD_EXISTING_OPERATOR_IDS,MOD_ADDED_OPERATORS,MOD_BOND_IDS,MOD_NEW_BOND_MEMBERS,MOD_STRATEGY_IDS,enabledModBondMembers,normalizeModOptions,optionsFromSettings,settingsFromOptions} from '../../../shared/plugins/marisaProfile.js';
-const labels=${JSON.stringify(labels,null,2)}; // i18n-ignore: fallback game names; loaded records provide localized names.
+const labels=${JSON.stringify(labels)}; // i18n-ignore: fallback game names; loaded records provide localized names.
 const defaultMembers=new Set(${JSON.stringify(defaultMembers,null,2)});
 export function MarisaSettings({values={},disabled=false,onSave}){
   useData('chess','backups','bonds');

@@ -107,7 +107,7 @@ test('production SES Worker applies and maintains the Rhodes overflow cap', asyn
 test('native sandbox match child completes real bot rounds including prep hooks', {timeout:120000},async t=>{
  const previous=process.env.SP_PLUGIN_SCRIPTS;process.env.SP_PLUGIN_SCRIPTS='sandbox';
  t.after(()=>{if(previous===undefined)delete process.env.SP_PLUGIN_SCRIPTS;else process.env.SP_PLUGIN_SCRIPTS=previous;});
- const contents=createContentSets({registry,vanillaData:getData()});const r=contents.resolve(['marisa']);assert.ok(r.ok,JSON.stringify(r));
+ const contents=createContentSets({registry,vanillaData:getData()});const r=await contents.resolve(['marisa']);assert.ok(r.ok,JSON.stringify(r));
  const quiet={info(){},warn(){},error(...args){console.error(...args);}};
  const hosts=createMatchHosts({contents,log:quiet,options:{virtualTime:true,matchOptions:{botRehearsal:0}}});t.after(()=>hosts.close());
  let finish;const done=new Promise(resolve=>{finish=resolve;});

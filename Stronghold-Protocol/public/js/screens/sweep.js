@@ -11,6 +11,10 @@
 //              enemy_handbook_table levelInfoList: E … SS — with the enemy's own number beside it).
 // ⓘ opens 玩法说明 at its 进阶图鉴 chapter. The report and the codex are full-screen Modals (focus trap; Esc closes the
 // codex first, then the report; the focus returns to the lobby's button). The tab is remembered (sp.pref).
+// Which set it shows (public/js/data.js: either the server's own files, or a room's content set once the page holds one —
+// public/js/content.js installs that only while this page is in a room whose `content.vanilla` is false): the header names
+// it, so a report read in the lobby says 原版 data even when the server's rooms are created with a mod, and the room's
+// entry (screens/room.js) is where a modded room's 盟约 / 策略 appear.
 // Styles: css/screens/sweep.css (sw-*).
 
 import { useMemo, useState } from '../../vendor/hooks.module.js';
@@ -20,6 +24,7 @@ import { bondIconUrl, bandIconUrl, enemyIconUrl, factionIconUrl, chessAvatarUrl 
 import { attackInterval, fmtNum } from '../ui/gameLogic.js';
 import { abilityRows } from '../ui/abilityLines.js';
 import { data, useData } from '../data.js';
+import { contentSet } from '../content.js';
 import { useStore, loadPref, savePref } from '../store.js';
 import { loadoutStore } from '../ui/loadoutSync.js';
 import { openGuide, guidePages } from '../ui/guide.js';
@@ -403,6 +408,9 @@ export function SweepReport({ onClose }) {
   const [bandSel, setBandSel] = useState(null);
   const [enemySel, setEnemySel] = useState(null);
   const [codex, setCodex] = useState(null);
+  // what this report reads (header "Which set it shows"): the room's content set once this page holds one, the server's
+  // own files otherwise. content.js's `contentSet` is the one place that knows (cs: null, status: 'idle' = no set held).
+  const setLine = useStore((s) => (s.cs ? `${t('本房间的内容组合')} · cs ${s.cs.slice(0, 8)}` : t('服务器的原始内容')), Object.is, contentSet);
 
   // defaults once the data is there: the first tile of each tab
   const bonds = ready ? (data.list('bonds') || []).filter((b) => b && b.bondId).sort((a, b) => (a.identifier ?? 99) - (b.identifier ?? 99)) : [];
@@ -442,6 +450,7 @@ export function SweepReport({ onClose }) {
         ${TABS.map((x) => html`<button key=${x.id} type="button" role="tab" aria-selected=${tab === x.id ? 'true' : 'false'} class=${cx('sw-tab', tab === x.id && 'is-on')}
           onClick=${() => setTab(x.id)}><span class="sw-tab__icon">${x.icon()}</span><span>${t(x.name)}</span></button>`)}
       </nav>
+      <span class="sw-set" data-testid="sw-set" title=${t('报告读取的内容组合')}>${setLine}</span>
     </header>
     <main class="sw-body" data-tab=${tab}>
       <aside class="sw-left">${left}</aside>

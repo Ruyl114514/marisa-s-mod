@@ -48,6 +48,7 @@ import { createVisualSets } from './plugins/visualSet.js';
 import { createContentSets } from './plugins/contentSets.js';
 import { createPluginPolicy } from './plugins/policy.js';
 import { createRoomSets } from './plugins/roomSets.js';
+import { warmDefaultPlugins } from './plugins/warmup.js';
 import { createMatchHosts } from './match/host/index.js';
 import { createTrustedRuntime } from './plugins/trustedRuntime.js';
 import { trustedHostAllowed } from './plugins/trusted.js';
@@ -78,12 +79,14 @@ export {
  *   maxConnectionsPerAddr?: number, maxRoomsPerAddr?: number, maxMatchesPerAddr?: number, resyncMinGapMs?: number,
  *   heavyPerSec?: number, heavyBurst?: number, trustProxy?: 'auto' | boolean, soloReconnectWindowMs?: number,
  *   assetIndex?: boolean | { cacheFile?: string | null, delayMs?: number }, studio?: boolean,
- *   matchHost?: object,
+ *   matchHost?: object, warm?: boolean,
  * }} [opts]
  *   assetIndex: the content-hash index (default on; false or SP_ASSET_INDEX=0: off — config.js assetIndexOptionsFrom);
  *   studio: the plugin studio at /studio/ (default on for this machine and the local network — SP_STUDIO=local|off;
  *   false: none);
  *   matchHost: options of the match hosts (server/match/host/index.js — watchdogMs, matchOptions …; tests)
+ *   warm: build the default plugin set in the background once listening (plugins/warmup.js — default on, off under
+ *   `node --test`; true: always, false: never)
  * @returns {Promise<{ port: number, host: string, url: string, server: http.Server, wss: import('ws').WebSocketServer,
  *                     lobby: import('./lobby.js').Lobby, network: import('./net.js').Network,
  *                     registry: import('./net.js').SessionRegistry, packs: ReturnType<typeof createPluginRegistry>,
@@ -91,7 +94,7 @@ export {
  *                     contents: ReturnType<typeof createContentSets>, hosts: ReturnType<typeof createMatchHosts>,
  *                     traffic: ReturnType<typeof createTrafficCounter>, assetIndex: ReturnType<typeof createAssetIndex> | null,
  *                     views: ReturnType<typeof createManifestViews> | null, studio: ReturnType<typeof createStudio> | null,
- *                     close: () => Promise<void> }>}
+ *                     warming: Promise<object | null>, close: () => Promise<void> }>}
  */
 export async function startServer(opts = {}) {
   const { port, host } = listenAddress(opts);
@@ -191,6 +194,15 @@ export async function startServer(opts = {}) {
   }
   server.on('error', (e) => log.error('[http] server error', e));
   assetIndex?.start();
+  // The default plugins' content set is built here, in the background, rather than inside the first room.create that
+  // needs it: building one costs seconds on this process (the script preflight spawns a child that evaluates the plugin's
+  // scripts under SES), and the first host to open a room should not wait for it while nothing else is being served.
+  // `warming` is what close() waits for and what a test or a probe can await (return value below).
+  //
+  // Off under `node --test` unless asked for: the suites boot ~160 servers, most of them against this repository's own
+  // plugins/ folder, and a warm-up each would spawn a sandboxed child per server for a cache the test never reads. A test
+  // that means to exercise it passes warm: true (test/plugins/warmup.test.js).
+  const warming = warmDefaultPlugins({ plugins: roomSets, log, enabled: opts.warm === true || (opts.warm === undefined && !process.env.NODE_TEST_CONTEXT) });
 
   const addr = server.address();
   const actualPort = typeof addr === 'object' && addr ? addr.port : port;
@@ -201,6 +213,9 @@ export async function startServer(opts = {}) {
     if (closing) return closing;
     closing = (async () => {
       try { lobby.shutdown('shutdown'); } catch (e) { log.error('[shutdown] lobby', e); }
+      // the warm-up's child process must be gone before the caller is told the server is closed, or a test's process
+      // exits late (it never rejects — see plugins/warmup.js)
+      await warming;
       try { hosts.close(); } catch (e) { log.error('[shutdown] match hosts', e); }
       network.close();
       assetIndex?.close();
@@ -216,7 +231,7 @@ export async function startServer(opts = {}) {
     return closing;
   }
 
-  return { port: actualPort, host: boundHost, url, server, wss, lobby, network, registry, packs, content, visual, contents, hosts, traffic, assetIndex, views, studio, close };
+  return { port: actualPort, host: boundHost, url, server, wss, lobby, network, registry, packs, content, visual, contents, hosts, traffic, assetIndex, views, studio, warming, close };
 }
 
 // `node server/index.js` / npm start: listen, print the banner, stop on SIGINT / SIGTERM (http/boot.js).

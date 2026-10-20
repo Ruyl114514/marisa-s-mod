@@ -54,7 +54,7 @@ writePlugin(path.join(pluginsDir, 'bond-def'), { manifest: 2, version: '1.0.0', 
 const registry = createPluginRegistry({ publicDir: path.join(ROOT, 'public'), dataDir: path.join(ROOT, 'data'), packsDir: path.join(tmp, 'packs'), pluginsDir }, { log: quiet });
 registry.refresh(true);
 const contents = createContentSets({ registry, vanillaData: getData({ log: quiet }), log: quiet });
-const built = contents.resolve(['bond-def']);
+const built = await contents.resolve(['bond-def']);
 assert.ok(built.ok, JSON.stringify(built));
 const CS = built.set.cs;
 const CS16 = CS.slice(0, 16);

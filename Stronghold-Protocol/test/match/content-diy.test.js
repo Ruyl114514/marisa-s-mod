@@ -97,7 +97,7 @@ test('the worker payload and the test journal carry kitted only when the match w
   m.dispose();
 });
 
-test('lobby start passes the room content list on the local match and on the match host; a vanilla room omits it', (t) => {
+test('lobby start passes the room content list on the local match and on the match host; a vanilla room omits it', async (t) => {
   const set = content(t);
   const plugins = { dataOf: () => set.data, kittedOf: (cs) => (cs === set.cs ? set.kitted : null) };
   const seen = [];
@@ -108,7 +108,7 @@ test('lobby start passes the room content list on the local match and on the mat
   }
   const host = { playerId: 'p_host', name: 'H', connected: true, roomCode: null, ws: null };
   const lobby = new Lobby({ registry: new SessionRegistry(), MatchClass: Rec, plugins, getData: () => set.data, log: { info() {}, warn() {}, error() {}, debug() {} } });
-  assert.equal(lobby.create(host, { mode: 'coop', difficulty: 'NORMAL' }).ok, true);
+  assert.equal((await lobby.create(host, { mode: 'coop', difficulty: 'NORMAL' })).ok, true);
   assert.equal(lobby.addBot(host).ok, true);
   const room = lobby.roomOf(host);
   room.content = { cs: set.cs, vanilla: false, plugins: [{ id: 'data-demo', version: '1.0.0', hash: 'ab'.repeat(8) }] };
@@ -131,7 +131,7 @@ test('lobby start passes the room content list on the local match and on the mat
     log: { info() {}, warn() {}, error() {}, debug() {} },
   });
   const host2 = { playerId: 'p_host2', name: 'H2', connected: true, roomCode: null, ws: null };
-  assert.equal(lobby2.create(host2, { mode: 'solo', difficulty: 'NORMAL' }).ok, true);
+  assert.equal((await lobby2.create(host2, { mode: 'solo', difficulty: 'NORMAL' })).ok, true);
   const room2 = lobby2.roomOf(host2);
   room2.content = { cs: set.cs, vanilla: false, plugins: [] };
   room2.seatOf(host2.playerId).content = 'ready';
@@ -145,7 +145,7 @@ test('lobby start passes the room content list on the local match and on the mat
   }
   const lobby3 = new Lobby({ registry: new SessionRegistry(), MatchClass: Rec2, getData: () => DATA, log: { info() {}, warn() {}, error() {}, debug() {} } });
   const host3 = { playerId: 'p_host3', name: 'H3', connected: true, roomCode: null, ws: null };
-  assert.equal(lobby3.create(host3, { mode: 'solo', difficulty: 'NORMAL' }).ok, true);
+  assert.equal((await lobby3.create(host3, { mode: 'solo', difficulty: 'NORMAL' })).ok, true);
   assert.equal(lobby3.start(host3).ok, true);
   assert.equal(Object.hasOwn(vanilla[0], 'kitted'), false, 'a vanilla room does not grow a kitted key');
 });

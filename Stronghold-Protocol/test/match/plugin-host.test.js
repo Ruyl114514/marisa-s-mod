@@ -98,7 +98,7 @@ describe('match hosts (P1c): a content set\'s matches in a match host of its own
       }],
     });
     const contents = setsOf(dir);
-    const r = contents.resolve(['marathon']);
+    const r = await contents.resolve(['marathon']);
     assert.ok(r.ok, JSON.stringify(r));
     assert.deepEqual(r.set.modes.map((m) => [m.id, m.roomMode, m.difficulty]), [['mode_x_marathon_long', 'coop', 'NORMAL']]);
     contents.hold(r.set.cs);
@@ -128,8 +128,8 @@ describe('match hosts (P1c): a content set\'s matches in a match host of its own
   test('the concurrency limit (worker threads, the opt-in): one worker more than maxWorkers is PLUGIN_BUSY while each has a match; an idle one makes room', { timeout: 60_000 }, async () => {
     const dir = pluginsDir({ one: [{ data: ['p.json'] }, { 'p.json': bondPatch(0.31) }], two: [{ data: ['p.json'] }, { 'p.json': bondPatch(0.32) }] });
     const contents = setsOf(dir);
-    const a = contents.resolve(['one']).set;
-    const b = contents.resolve(['two']).set;
+    const a = (await contents.resolve(['one'])).set;
+    const b = (await contents.resolve(['two'])).set;
     const hosts = createMatchHosts({ contents, log: quiet, options: { transport: 'worker', maxWorkers: 1, matchModule: FIXTURE } });
     const human = [{ seat: 0, playerId: 'p_1', name: 'P1', isBot: false, connected: true }];
     try {
@@ -155,7 +155,7 @@ describe('match hosts (P1c): a content set\'s matches in a match host of its own
     // a plugin whose own numbers are far above the official maximum: a scan of the set would raise the cap with them
     const dir = pluginsDir({ caps: [{ data: ['p.json'] }, { 'p.json': bondPatch(0.34) }] });
     const contents = setsOf(dir);
-    const r = contents.resolve(['caps']);
+    const r = await contents.resolve(['caps']);
     assert.ok(r.ok, JSON.stringify(r));
     assert.equal(r.set.bounds?.v, 1, 'the set carries the snapshot');
     assert.equal(r.set.bounds.bb.times, 12);

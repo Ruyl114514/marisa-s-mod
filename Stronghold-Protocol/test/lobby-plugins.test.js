@@ -193,7 +193,7 @@ describe('room.setPlugins (P1a: cosmetic plugins)', () => {
     assert.equal(toast.params?.names, 'later');
   });
 
-  test('a room holds its visual set while it uses it: released when it changes and when the room goes', () => {
+  test('a room holds its visual set while it uses it: released when it changes and when the room goes', async () => {
     const calls = [];
     const plugins = {
       resolve: (ids) => ({ ok: true, set: { vs: (ids.join('-').charCodeAt(0) % 16).toString(16).repeat(64), plugins: ids.map((id) => ({ id, version: '1.0.0', class: 'cosmetic', hash: '0'.repeat(16) })), warnings: [], bytes: 1 } }),
@@ -202,17 +202,17 @@ describe('room.setPlugins (P1a: cosmetic plugins)', () => {
     };
     const lobby = new Lobby({ registry: new SessionRegistry(), content: { cs: 'ab'.repeat(32) }, plugins });
     const session = { playerId: 'p1', name: 'A', connected: true, roomCode: null, ws: null };
-    assert.deepEqual(lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
-    assert.deepEqual(lobby.setPlugins(session, { plugins: [{ id: 'a' }] }), { ok: true });   // 'a' → 1…
-    assert.deepEqual(lobby.setPlugins(session, { plugins: [{ id: 'b' }] }), { ok: true });   // 'b' → 2…
-    assert.deepEqual(lobby.setPlugins(session, { plugins: [] }), { ok: true });
-    assert.deepEqual(lobby.setPlugins(session, { plugins: [{ id: 'a' }] }), { ok: true });
+    assert.deepEqual(await lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
+    assert.deepEqual(await lobby.setPlugins(session, { plugins: [{ id: 'a' }] }), { ok: true });   // 'a' → 1…
+    assert.deepEqual(await lobby.setPlugins(session, { plugins: [{ id: 'b' }] }), { ok: true });   // 'b' → 2…
+    assert.deepEqual(await lobby.setPlugins(session, { plugins: [] }), { ok: true });
+    assert.deepEqual(await lobby.setPlugins(session, { plugins: [{ id: 'a' }] }), { ok: true });
     lobby.leave(session);
     assert.deepEqual(calls, [['hold', '11'], ['hold', '22'], ['release', '11'], ['release', '22'], ['hold', '11'], ['release', '11']]);
     lobby.shutdown();
   });
 
-  test('the host\'s result replay is dropped only when the set changes: the same set again, or a refused one, keeps it', () => {
+  test('the host\'s result replay is dropped only when the set changes: the same set again, or a refused one, keeps it', async () => {
     const plugins = {
       resolve: (ids) => (ids.includes('absent') ? { error: ERR.PLUGIN_UNKNOWN, detail: 'absent is not installed' }
         : { ok: true, set: { vs: (ids.join('-').charCodeAt(0) % 16).toString(16).repeat(64), plugins: ids.map((id) => ({ id, version: '1.0.0', class: 'cosmetic', hash: '0'.repeat(16) })), warnings: [], bytes: 1 } }),
@@ -220,16 +220,16 @@ describe('room.setPlugins (P1a: cosmetic plugins)', () => {
     };
     const lobby = new Lobby({ registry: new SessionRegistry(), content: { cs: 'ab'.repeat(32) }, plugins });
     const session = { playerId: 'p1', name: 'A', connected: true, roomCode: null, ws: null };
-    assert.deepEqual(lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
+    assert.deepEqual(await lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
     const r = lobby.getRoom(session.roomCode);
-    assert.deepEqual(lobby.setPlugins(session, { plugins: [{ id: 'a' }] }), { ok: true });
+    assert.deepEqual(await lobby.setPlugins(session, { plugins: [{ id: 'a' }] }), { ok: true });
     // a settlement screen still open: the lobby replays its result until the player acts (dropReplay)
     r.replay = { pending: new Set(['p1']), frames: new Map([['p1', { t: 'm.result' }]]), publicFrame: { t: 'm.public' } };
-    assert.deepEqual(lobby.setPlugins(session, { plugins: [{ id: 'a' }] }), { ok: true });
+    assert.deepEqual(await lobby.setPlugins(session, { plugins: [{ id: 'a' }] }), { ok: true });
     assert.ok(r.replay?.pending.has('p1'), 'the same set again: kept');
-    assert.equal(lobby.setPlugins(session, { plugins: [{ id: 'absent' }] }).error, ERR.PLUGIN_UNKNOWN);
+    assert.equal((await lobby.setPlugins(session, { plugins: [{ id: 'absent' }] })).error, ERR.PLUGIN_UNKNOWN);
     assert.ok(r.replay?.pending.has('p1'), 'a refused set: kept');
-    assert.deepEqual(lobby.setPlugins(session, { plugins: [{ id: 'b' }] }), { ok: true });
+    assert.deepEqual(await lobby.setPlugins(session, { plugins: [{ id: 'b' }] }), { ok: true });
     assert.equal(r.replay, null, 'another set: the host moved on');
     lobby.shutdown();
   });
@@ -242,13 +242,13 @@ describe('room.setPlugins (P1a: cosmetic plugins)', () => {
     }
   });
 
-  test('a lobby given no visual sets refuses any plugin; an empty list is fine', () => {
+  test('a lobby given no visual sets refuses any plugin; an empty list is fine', async () => {
     const lobby = new Lobby({ registry: new SessionRegistry(), content: { cs: 'ab'.repeat(32) } });
     const session = { playerId: 'p1', name: 'A', connected: true, roomCode: null, ws: null };
     lobby.registry.add?.(session);
-    assert.deepEqual(lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
-    assert.equal(lobby.setPlugins(session, { plugins: [{ id: 'texas-red' }] }).error, ERR.PLUGIN_UNKNOWN);
-    assert.deepEqual(lobby.setPlugins(session, { plugins: [] }), { ok: true });
+    assert.deepEqual(await lobby.create(session, { mode: 'solo', difficulty: 'NORMAL' }), { ok: true });
+    assert.equal((await lobby.setPlugins(session, { plugins: [{ id: 'texas-red' }] })).error, ERR.PLUGIN_UNKNOWN);
+    assert.deepEqual(await lobby.setPlugins(session, { plugins: [] }), { ok: true });
     assert.deepEqual(lobby.getRoom(session.roomCode).toState().content, { cs: 'ab'.repeat(32), vanilla: true, plugins: [] });
     lobby.shutdown();
   });
@@ -489,9 +489,9 @@ describe('room content sets (P1c: gameplay plugins)', () => {
       const lobby = new Lobby({ registry: new SessionRegistry(), content: { cs: 'ab'.repeat(32) }, plugins });
       const host = { playerId: 'p_host', name: 'H', connected: true, roomCode: null, ws: null };
       const guest = { playerId: 'p_guest', name: 'G', connected: true, roomCode: null, ws: null };
-      assert.deepEqual(lobby.create(host, { mode: 'coop', difficulty: 'NORMAL' }), { ok: true });
+      assert.deepEqual(await lobby.create(host, { mode: 'coop', difficulty: 'NORMAL' }), { ok: true });
       assert.deepEqual(lobby.join(guest, { code: host.roomCode }), { ok: true });
-      assert.deepEqual(lobby.setPlugins(host, { plugins: [{ id: 'rules' }] }), { ok: true });
+      assert.deepEqual(await lobby.setPlugins(host, { plugins: [{ id: 'rules' }] }), { ok: true });
       const room = lobby.getRoom(host.roomCode);
       assert.equal(room.modded, true);
       const seat = room.seatOf(guest.playerId);

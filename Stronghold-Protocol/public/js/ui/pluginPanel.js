@@ -1,27 +1,27 @@
-// ui/pluginPanel.js — the room's 插件 panel (DESIGN §32 P1a; the design study's §7.1) and the list of a server's plugins.
-// Loaded only when one of them opens (the room's tag, ui/pluginTag.js; the title screen's button, screens/title.js), so
-// the title page and the room carry none of it:
+// ui/pluginPanel.js — the 插件 panel of 选择模拟协议 (DESIGN §32 P1a; the design study's §7.1) and the list of a
+// server's plugins. Loaded only when one of them opens (the tag of the lobby, ui/pluginTag.js; the title screen's button,
+// screens/title.js), so the title page and the screens carry none of it:
 //
 //   * PluginPanel — the cosmetic and (P1c, DESIGN §32.6) content plugins this server has for rooms (the catalogue:
 //     content.js loadCatalog — fetched when the panel opens, and only on a server that has plugins: content.plugins > 0),
-//     each with its
-//     switch for the host and its state for everybody else (the other players and the spectators read it), its version,
-//     authors, size and a 非官方 mark; 「自动」 on one switched on because another needs it; the warnings of the room's set
-//     (two plugins change the same art — the later one applies; a plugin made for other game versions, still usable:
-//     art never changes a battle). The host's switch sends room.setPlugins with the plugins it wants (the server adds
-//     what they require); during a match it is read-only. 「重新应用」 (the host, a room with plugins) sends the same
-//     choice again: when a plugin's files changed on the server since (the lobby tells the host: an m.toast), that
-//     makes the set of the files as they are now. A content plugin changes the room's gameplay (unofficial: 改变玩法, its
-//     match stays out of the statistics overview); one made for other game versions cannot be switched on. With gameplay
-//     plugins the panel also shows the room's mode — the official one of the difficulty or a mode a plugin adds
-//     (room.setMode; the host picks, the others read it) — and this page's download and check of the room's content set
-//     (content.js contentSet: its progress, ready, or failed — 「请刷新页面」). Below them (P4, DESIGN §32.8) the
-//     interface plugins of the server — each player switches them in 设置; the host may mark one 推荐 — and the
-//     room.panel slot.
+//     each with its switch, its version, authors, size and a 非官方 mark; 「自动」 on one switched on because another needs
+//     it; the warnings of a set (two plugins change the same art — the later one applies; a plugin made for other game
+//     versions, still usable: art never changes a battle). A content plugin changes the room's gameplay (unofficial:
+//     改变玩法, its match stays out of the statistics overview); one made for other game versions cannot be switched on.
+//     Below them (P4, DESIGN §32.8) the interface plugins of the server — each player switches them in 设置; the host may
+//     mark one 推荐 — and the room.panel slot.
+//
+//     Where it opens decides what a switch writes. On 选择模拟协议 (`lobby`) there is no room yet: the switches edit this
+//     browser's pre-selection (ui/pluginTag.js lobbyPlugins) and screens/lobby.js sends it as room.setPlugins right after
+//     room.create. Started from a room… there is no such mount any more: since the tag moved to the lobby (the room's
+//     ui/pluginTag.js PluginTagStatic only reads the set), a room's plugins are chosen before it exists, so this file's
+//     room branch — room.setPlugins of the host, the 重新应用 resend, the room.setMode picker, the set's download state and
+//     the match's read-only hint — is kept for the protocol it documents but no screen reaches it. What a room needs mid
+//     session (another plugin's files changed on the server) is a direct room.setPlugins from the lobby's own next create.
 //   * InstalledPlugins — the title screen's 「本服务器安装了 N 个插件」 (screens/title.js; §7.4): every unofficial plugin
 //     the catalogue lists — any class, with what this version does with it (the catalogue fetched when it opens).
-// The tag and the small facts (roomPluginFacts, sizeText, pluginTagText, pluginMicro) are ui/pluginTag.js's, re-exported
-// here. Texts go through t() (docs/I18N.md).
+// The tag and the small facts (roomPluginFacts, roomPlugins, sizeText, pluginTagText, pluginMicro) are ui/pluginTag.js's:
+// the screens import them from there, not from here. Texts go through t() (docs/I18N.md).
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
 import { APP_VERSION } from '../../../shared/constants.js';
@@ -34,7 +34,7 @@ import { catalog, contentSet, loadCatalog, cosmeticPlugins, installedCount, plug
 import { appVersionMatches } from '../../../shared/plugins/manifest.js';
 import { toggleRecommend, uiPluginEntries, uiRecommend, visibleRecommend } from './uiPlugins.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
-import { sizeText, roomPluginFacts, pluginTagText, pluginMicro, ruleLine } from './pluginTag.js';
+import { sizeText, roomPluginFacts, roomPlugins, GAMEPLAY_CLASSES, lobbyFacts, lobbyPlugins, setLobbyPlugins, pluginTagText, pluginMicro, ruleLine } from './pluginTag.js';
 
 const cx = (...p) => p.flat().filter(Boolean).join(' ');
 
@@ -54,15 +54,9 @@ export function nextChoice(chosen, id, on, offered = null) {
   return out;
 }
 
-/** The plugins a room may switch on: the loaded cosmetic and content plugins of scope `room` (the catalogue's order). */
-export const roomPlugins = (plugins) => [
-  ...cosmeticPlugins(plugins, 'room'),
-  ...(Array.isArray(plugins) ? plugins : []).filter((p) => p && ['content','script','trusted'].includes(p.class) && p.status === 'loaded' && Array.isArray(p.scope) && p.scope.includes('room')),
-].sort((a, b) => (String(a.id) < String(b.id) ? -1 : String(a.id) > String(b.id) ? 1 : 0));
-
 /** [ASSUMED] Installed optional cosmetics are companion looks. A hint never changes a room or personal choice. */
 export function companionCosmeticHints(plugin, plugins, active) {
-  if (!['content', 'script', 'trusted'].includes(plugin.class)) return [];
+  if (!GAMEPLAY_CLASSES.includes(plugin.class)) return [];
   return cosmeticPlugins(plugins, 'personal').filter(p => !active.has(p.id)
     && Object.hasOwn(plugin.optional || {}, p.id) && appVersionMatches(plugin.optional[p.id], p.version))
     .map(p => t('外观在『{name}』（设置 → 外观插件）', { name: pluginName(p) }));
@@ -91,8 +85,8 @@ function ContentState({ cs }) {
 
 /** The room's mode with gameplay plugins: the official one of the difficulty, or a plugin mode (room.setMode). */
 function ModePicker({ room, f, busy, onPick }) {
-  const modes = f.modes.filter((m) => m.roomMode === room.mode);
-  if (!f.modded || !modes.length) return null;
+  const modes = room ? f.modes.filter((m) => m.roomMode === room.mode) : [];
+  if (!f.modded || !modes.length || !room) return null;
   const official = `mode_${room.mode === 'solo' ? 'single' : 'multi'}_${String(room.difficulty || 'NORMAL').toLowerCase()}`;
   const options = [{ id: official, name: t('原版模式（按难度）') }, ...modes.map((m) => ({ id: m.id, name: typeof m.name === 'string' ? m.name : m.id }))];
   const current = f.modeId || official;
@@ -105,8 +99,13 @@ function ModePicker({ room, f, busy, onPick }) {
   </div>`;
 }
 
-/** The room's 插件 panel (see the header). */
-export function PluginPanel({ open, room, myId, onClose }) {
+/**
+ * The 插件 panel (see the header): a room's — the host switches, everybody else reads — or, on 选择模拟协议 (`lobby`,
+ * before any room exists), the plugins the room this player creates will carry: there is no server to ask yet, so the
+ * switches write ui/pluginTag.js lobbyPlugins (this browser's choice) and screens/lobby.js sends it right after
+ * room.create.
+ */
+export function PluginPanel({ open, room = null, myId, lobby = false, defaults = null, onClose }) {
   const cat = useStore((s) => s, Object.is, catalog);
   const personalIds = useStore(s => s.ids, Object.is, personal);
   const installed = useStore(installedCount);
@@ -115,34 +114,47 @@ export function PluginPanel({ open, room, myId, onClose }) {
   const alive = useRef(true);
   // the catalogue — again each time the panel opens (a plugin dropped in meanwhile shows), never on a server without any
   useEffect(() => { alive.current = true; if (installed) loadCatalog({ force: true }); return () => { alive.current = false; }; }, [installed]);
-  const f = roomPluginFacts(room, myId);
+  const offered = installed ? roomPlugins(cat.plugins) : [];
+  // the choice this browser keeps for the next room (null: the server's own default set, which it applies by itself);
+  // the panel writes it back through setLobbyPlugins, so it subscribes to it like any other store
+  const stored = useStore((s) => s.entries, Object.is, lobbyPlugins);
+  const f = lobby ? lobbyFacts({ entries: stored, defaults, offered }) : roomPluginFacts(room, myId);
   const activeCosmetics = new Set([...f.on, ...personalSet(personalIds, cosmeticPlugins(cat.plugins, 'personal')).order]);
   const recIds = useStore((s) => s.ids, Object.is, uiRecommend);
-  const isHost = !!(room && room.hostId != null && room.hostId === myId);
+  // the creator of the room is its host: on 选择模拟协议 this player is about to be one
+  const isHost = lobby || !!(room && room.hostId != null && room.hostId === myId);
   const recommended = visibleRecommend(room, isHost, recIds);
   const uiList = installed ? uiPluginEntries(cat.plugins) : [];
-  const offered = installed ? roomPlugins(cat.plugins) : [];
   const offeredIds = cat.status === 'ready' ? new Set(offered.map((p) => p.id)) : null;
   // a plugin the room has that the catalogue no longer offers (removed, skipped, another scope now) still shows, by its
   // id: its switch only turns it off
   const rows = [...offered, ...f.plugins.filter((p) => !offered.some((o) => o.id === p.id)).map((p) => ({ id: p.id, version: p.version, missing: true }))];
   const nameOf = (id) => { const p = cat.plugins.find((x) => x.id === id); return p ? pluginName(p) : String(id ?? ''); };
   const classOf = (id) => cat.plugins.find((x) => x.id === id)?.class || f.plugins.find((x) => x.id === id)?.class || 'cosmetic';
-  const anyContent = f.modded || offered.some((p) => ['content','script','trusted'].includes(p.class));
+  const anyContent = f.modded || offered.some((p) => GAMEPLAY_CLASSES.includes(p.class));
   /** room.setPlugins with these ids (one request at a time; `what`: the row — or 'reapply' — that shows it busy). */
   const send = async (ids, what, change = null) => {
     if (inFlight.current || !f.editable) return;
     inFlight.current = true;
     setBusy(what);
     try {
-      await net.request('room.setPlugins', { plugins: settingsSelection(ids, f.plugins, change) });
+      if (lobby) {
+        // no room to ask yet: keep the choice here, screens/lobby.js sends it once the room exists
+        const settings = new Map((Array.isArray(stored) ? stored : []).map((e) => [e.id, e.settings]));
+        if (change && change.settings && Object.keys(change.settings).length) settings.set(change.id, change.settings);
+        else if (change) settings.delete(change.id);
+        setLobbyPlugins(ids.map((id) => ({ id, ...(settings.get(id) ? { settings: settings.get(id) } : {}) })));
+      } else {
+        await net.request('room.setPlugins', { plugins: settingsSelection(ids, f.plugins, change) }, { timeout: 45000 });
+      }
     } catch (err) { toastError(err); } finally {
       inFlight.current = false;
       if (alive.current) setBusy(null);
     }
   };
   const toggle = (id, on) => send(nextChoice(f.chosen, id, on, offeredIds), id);
-  // the room's mode (room.setMode, DESIGN §32.6)
+  // the room's mode (room.setMode, DESIGN §32.6) — a room's only: before the room exists its plugins' modes are not known
+  // yet (the server resolves them with the set), so the lobby shows no picker
   const pickMode = async (modeId) => {
     if (inFlight.current || !f.editable) return;
     inFlight.current = true;
@@ -154,12 +166,14 @@ export function PluginPanel({ open, room, myId, onClose }) {
   };
   // the same choice again (without a plugin the server no longer offers): the set of the files as they are now
   const reapply = () => send(f.chosen.filter((x) => !offeredIds || offeredIds.has(x)), 'reapply');
+  // back to the set the server hands every new room by itself (null: nothing of this browser's is sent after room.create)
+  const resetToDefaults = () => { setLobbyPlugins(null); };
   return html`<${Modal} open=${open} onClose=${onClose} title=${t('插件')} micro="PLUGINS" width="7.4rem"
       actions=${html`<${Button} variant="primary" icon="check" onClick=${onClose}>${t('完成')}<//>`}>
     <div class="plugpanel" data-testid="plugin-panel">
       <p class="plugpanel__lead">
         <span class=${cx('plugtag plugtag--static', f.count && 'is-modded', f.modded && 'is-unofficial')}>${f.count ? t('插件 ×{n}', { n: f.count }) : t('原版')}</span>
-        ${t('房间的外观插件只改变画面和声音，不影响战斗；插件为非官方制作。')}
+        ${lobby ? t('这些插件会应用到你创建的房间；挑好后回到这一页创建房间。') : t('房间的外观插件只改变画面和声音，不影响战斗；插件为非官方制作。')}
       </p>
       ${anyContent ? html`<p class="set-hint">${t('改变玩法的插件会改变本房间的数据与规则；这样的对局为非官方对局，不计入统计总览。')}</p>` : null}
       ${ruleLine(f.rules) ? html`<p class="set-hint" data-testid="plugin-rules">${ruleLine(f.rules)}</p>` : null}
@@ -174,7 +188,7 @@ export function PluginPanel({ open, room, myId, onClose }) {
         ${rows.map((p) => {
           const on = f.on.has(p.id);
           const auto = f.auto.has(p.id);
-          const content = ['content','script','trusted'].includes(p.class || classOf(p.id));
+          const content = GAMEPLAY_CLASSES.includes(p.class || classOf(p.id));
           // a gameplay plugin made for other game versions is refused (PLUGIN_INCOMPATIBLE): its switch only turns it off
           const blocked = content && p.compatible === false && !on;
           return html`<li key=${p.id} class=${cx('plugrow', on && 'is-on', content && 'is-content')} data-plugin=${p.id}>
@@ -200,7 +214,11 @@ export function PluginPanel({ open, room, myId, onClose }) {
           </li>`;
         })}
       </ul>` : null}
-      ${f.editable && f.count ? html`<div class="plugpanel__reapply">
+      ${lobby && Array.isArray(stored) ? html`<div class="plugpanel__reapply">
+        <${Button} variant="secondary" size="sm" icon="refresh" data-testid="plugin-lobby-reset" disabled=${!!busy} onClick=${resetToDefaults}>${t('恢复默认')}<//>
+        <span class="set-hint">${t('本服务器的默认插件集')}</span>
+      </div>` : null}
+      ${!lobby && f.editable && f.count ? html`<div class="plugpanel__reapply">
         <${Button} variant="secondary" size="sm" icon="refresh" data-testid="plugin-reapply" disabled=${!!busy} onClick=${reapply}>${t('重新应用')}<//>
         <span class="set-hint">${t('插件的文件在服务器上更新后，重新应用才会生效。')}</span>
       </div>` : null}

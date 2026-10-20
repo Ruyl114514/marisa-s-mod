@@ -162,9 +162,10 @@
 //     a player seat (the seat is kept and given back on resume).
 
 import { randomBytes, randomInt } from 'node:crypto';
+import os from 'node:os';
 import { DIFFICULTIES, ERR, MAX_SEATS, MAX_SPECTATORS, ROOM_CODE_LEN, modeIdFor } from '../shared/constants.js';
 import { checkLoadout, checkLoadoutOps, cultivationCharIds, checkNotOwned, checkDiyPicks, charPotentialChanges, checkSkinSelection, operatorCharIds } from '../shared/protocol.js';
-import { encode, isDroppable, isErrCode, sendRaw, sendSession } from './net.js';
+import { encode, isDroppable, isErrCode, normalizeIp, sendRaw, sendSession } from './net.js';
 import { getData as defaultGetData, lookup } from './data.js';
 import { Match as DefaultMatch } from './match/Match.js';
 import { KITTED_CHARS } from './sim/content/kits/index.js';
@@ -312,6 +313,11 @@ export class Room {
     this.content = null;
     /** Test room (DESIGN §34.8). Set only at create, and only when the process switch is on. Never flipped later. */
     this.test = false;
+    /**
+     * 这个测试房是靠「请求来自本机」而不是靠进程开关建起来的（`SP_TEST_MODE` 没开）。开局与 `g.test` 的复核据此放行，
+     * 避免「建得出来、开不了局」。见 `isOwnerAddress` 与 docs/DEV-MODE.md。
+     */
+    this.testFromOwner = false;
     /** the room's queue (header "Gameplay plugins": Lobby.serial): what is still waiting or running, and its tail */
     this.queue = { pending: 0, tail: Promise.resolve() };
   }
@@ -355,6 +361,31 @@ export class Room {
       ...(this.test ? { test: true } : {}),
     };
   }
+}
+
+/**
+ * 这个请求是不是来自**本机**（回环，或本机任一网卡自己的地址）？
+ *
+ * 用途：测试房间的闸门例外（见 `Lobby.create`）。上游 `server/testMode.js` 按**绑定地址**判定，而只要这台机器装了
+ * VPN 网卡（Radmin / Tailscale / ZeroTier / Hyper-V）或从运营商拿到公网 IPv6，`interfacesArePrivate()` 就是 false，
+ * 于是 `--test-mode 1` 被拒 —— 哪怕房主就在本机用 localhost 打开页面。绑定地址说明的是「服务器能被谁访问」，
+ * 不是「谁在请求」；后者才是这里要的。
+ *
+ * 注意**不**用 `isLocalIp`：那会连内网里的其他机器（朋友）也算进来。这里只认回环与本机网卡地址，所以「同一台
+ * 机器的任意一个入口 URL」（127.0.0.1 / 局域网 IP / VPN IP / 公网 IPv6）都算本机，而远端客人不算。
+ * @param {string} addr 请求方地址（net.js 的 session.addr，可能带 IPv4-mapped 前缀）
+ * @returns {boolean}
+ */
+function isOwnerAddress(addr) {
+  const a = normalizeIp(typeof addr === 'string' ? addr : '');
+  if (!a) return false;
+  if (a === '127.0.0.1' || a === '::1') return true;
+  try {
+    for (const list of Object.values(os.networkInterfaces())) {
+      for (const info of list || []) if (normalizeIp(info?.address) === a) return true;
+    }
+  } catch { /* read failure: fail closed (the process switch still works) */ }
+  return false;
 }
 
 /** Room registry + lobby message handlers. Pass an instance as the `handler` of net.js Network. */
@@ -459,13 +490,27 @@ export class Lobby {
       // the plugin studio's rooms (the author hosts, or plays alone): the same choice again at once (refreshPlugins)
       let auto;
       try { auto = !!this.autoApplyPlugins?.({ code: room.code, hostId: room.hostId, humans: room.activeHumans().length, inMatch: !!room.match }); } catch { auto = false; }
-      if (kind === 'visual' && auto && this.refreshPlugins(room)) continue;
+      if (kind === 'visual' && auto) { this.reapplyPlugins(room, ids, noticeKey, kind); continue; }
       room.pluginNoticeKeys[kind] = noticeKey;
       this.log.info(`[lobby] ${room.code} plugins changed on disk: ${ids.join(', ')} — the host is asked to apply them again`);
       // during a match the panel cannot change them: the host hears it once the room is back in its lobby (onMatchEnd)
       room.pluginsChanged = [...new Set([...(room.pluginsChanged || []), ...ids])];
       if (!room.match) this.tellPluginsChanged(room);
     }
+  }
+
+  /**
+   * The studio's own room applies a changed set again, off this call: resolving is asynchronous now (the script preflight
+   * runs in a child process), so the scan that named the change cannot wait for it. What the room keeps if it worked is
+   * refreshPlugins's (its notice key, the members' news); if not, the host is asked like any other room.
+   */
+  reapplyPlugins(room, ids, noticeKey, kind) {
+    this.refreshPlugins(room).then((done) => {
+      if (done || room.disposed) return;
+      room.pluginNoticeKeys[kind] = noticeKey;
+      room.pluginsChanged = [...new Set([...(room.pluginsChanged || []), ...ids])];
+      if (!room.match) this.tellPluginsChanged(room);
+    }).catch((e) => this.log.error(`[lobby] ${room.code} could not apply its plugins again`, e));
   }
 
   /**
@@ -478,11 +523,11 @@ export class Lobby {
    * (false: the host is told).
    * @param {Room} room
    */
-  refreshPlugins(room) {
+  async refreshPlugins(room) {
     const before = room.content;
     if (!before?.vs || before.vanilla === false || !this.vanilla || !this.plugins) return false;
     const ids = before.plugins.filter((p) => !p.auto).map((p) => p.id);
-    const r = this.resolveContent(room, ids);
+    const r = await this.resolveContent(room, ids);
     if (!('content' in r) || !r.content) { this.log.info(`[lobby] ${room.code} plugins changed on disk and no longer apply: ${'detail' in r && r.detail ? r.detail : ('error' in r ? r.error : '?')}`); return false; }
     const next = r.content;
     if (next.vanilla === false || !next.vs) return false;
@@ -725,9 +770,13 @@ export class Lobby {
   // room.* handlers
   // ---------------------------------------------------------------------------------------------------
 
-  create(session, { mode, difficulty, test } = {}) {
-    // A test room exists only when the process switch allowed it. The check runs before the room is built.
-    if (test === true && this.testEnabled !== true) return fail(ERR.TEST_DISABLED);
+  async create(session, { mode, difficulty, test } = {}) {
+    // 测试房间 gate：上游按**绑定地址**判定（server/testMode.js 里 SP_TEST_MODE / --test-mode），所以只要这台机器装了
+    // VPN 网卡或拿到公网 IPv6，`1` 就会被拒 —— 哪怕房主就坐在这台机器前。绑定地址说明「服务器能被谁访问」，不是
+    // 「谁在请求」。因此本机发来的请求即使开关没开也允许建测试房，远端客人仍然需要开关。见 `isOwnerAddress`。
+    const isTest = test === true;
+    const ownerPeer = isTest && this.testEnabled !== true && isOwnerAddress(session.addr);
+    if (isTest && this.testEnabled !== true && !ownerPeer) return fail(ERR.TEST_DISABLED);
     const cur = this.roomOf(session);
     if (cur && cur.match) return fail(ERR.ROOM_STARTED, 'leave your running match first');
     if (this.rooms.size >= this.opts.maxRooms) return fail(ERR.INTERNAL, 'too many rooms');
@@ -745,11 +794,12 @@ export class Lobby {
     if (cur) this.removeMember(cur, session.playerId);
     const room = new Room(code, mode, difficulty, this.now());
     room.test = test === true;
+    room.testFromOwner = ownerPeer;
     room.content = this.vanilla;
     // the server owner's default plugins (plugins/config.json `default`; header "Gameplay plugins"): none — the original game
     const defaults = this.plugins?.defaults?.() || [];
     if (defaults.length) {
-      const r = this.resolveContent(room, defaults);
+      const r = await this.resolveContent(room, defaults);
       if ('error' in r) this.warnOnce(`[lobby] the default plugins (${defaults.join(', ')}) cannot be applied: ${r.error}${r.detail ? ` (${r.detail})` : ''}`);
       else { room.content = r.content; this.holdContent(r.content); }
     }
@@ -895,7 +945,7 @@ export class Lobby {
    * when it is the set the room already has. The host's result replay (a settlement screen still open) is dropped only
    * when the set did change: re-applying the same plugins, or a refused set, leaves it.
    */
-  setPlugins(session, { plugins }) {
+  async setPlugins(session, { plugins }) {
     const room = this.roomOf(session);
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (room.hostId !== session.playerId) return fail(ERR.NOT_HOST);
@@ -904,7 +954,7 @@ export class Lobby {
     /** @type {Record<string, Record<string, unknown>>} */
     const settings = {};
     for (const p of plugins) if (p.settings) settings[p.id] = p.settings;
-    const r = this.resolveContent(room, ids, settings);
+    const r = await this.resolveContent(room, ids, settings);
     if ('error' in r) return r;
     let content = r.content;
     const before = room.content;
@@ -936,7 +986,7 @@ export class Lobby {
    * @param {Room | null} room @param {string[]} ids @param {Record<string, Record<string, unknown>>} [settings]
    * @returns {{ content: Room['content'] } | { error: string, detail?: string }}
    */
-  resolveContent(room, ids, settings = {}) {
+  async resolveContent(room, ids, settings = {}) {
     if (!ids.length) {
       // the server owner may fix every room's plugins (plugins/config.json rooms: fixed): the original game is not one
       const fixed = (() => { try { return this.plugins?.fixed?.() || null; } catch { return null; } })();
@@ -945,7 +995,7 @@ export class Lobby {
     }
     if (!this.vanilla || !this.plugins) return fail(ERR.PLUGIN_UNKNOWN, 'this server applies no plugins');
     let r;
-    try { r = this.plugins.resolve(ids, { scope: 'room', settings, replacing: room?.content ?? null }); } catch (e) {
+    try { r = await this.plugins.resolve(ids, { scope: 'room', settings, replacing: room?.content ?? null }); } catch (e) {
       this.log.error(`[lobby] ${room?.code ?? '----'} plugin set failed`, e);
       return fail(ERR.INTERNAL);
     }
@@ -1328,8 +1378,9 @@ export class Lobby {
   }
 
   /**
-   * Extra fields of every `welcome` (net.js): the operators a 自选 slot may field (shared/diy.js `kitted`) and the
-   * server's content identity (header "Content identity").
+   * Extra fields of every `welcome` (net.js): the operators a 自选 slot may field (shared/diy.js `kitted`), the
+   * server's content identity (header "Content identity") and the plugins a new room starts with (`roomDefaults`: the
+   * host of 选择模拟协议 puts that set in front of their own choice, ui/pluginTag.js).
    */
   welcomeInfo() {
     let info;
@@ -1341,6 +1392,12 @@ export class Lobby {
       // Catalogue metadata, never part of a room or match; omitted when no loaded plugin publishes a notice.
       if (this.plugins?.hasNotices?.()) info.content.notices = true;
     }
+    // The plugins every new room is created with (plugins/config.json "default"): the same for every player, and what
+    // 选择模拟协议 shows before its host picks a set of their own. Omitted when the server starts rooms without any.
+    try {
+      const defaults = this.plugins?.defaults?.() || [];
+      if (defaults.length) info.roomDefaults = [...defaults];
+    } catch { /* a broken policy is the lobby's warning, not a broken welcome */ }
     // Omitted when the switch is off, so a welcome from a normal server stays identical.
     if (this.testEnabled === true) info.testMode = true;
     return info;
@@ -1352,7 +1409,7 @@ export class Lobby {
 
   /** @param {Room} room @param {string | null} [key] per-network limit key of the starter */
   startMatch(room, key = null) {
-    if (room.test && !this.testEnabled) return fail(ERR.TEST_DISABLED);
+    if (room.test && !this.testEnabled && !room.testFromOwner) return fail(ERR.TEST_DISABLED);
     const host = room.seatOf(room.hostId);
     if (host) host.ready = true;
     // the room's data: its content set's in a room with gameplay plugins (header "Gameplay plugins")
@@ -1605,7 +1662,7 @@ export class Lobby {
     const room = this.roomOf(session);
     if (!room) return fail(ERR.NOT_IN_ROOM);
     if (msg.t === 'g.test') {
-      if (!this.testEnabled) return fail(ERR.TEST_DISABLED);
+      if (!this.testEnabled && !room.testFromOwner) return fail(ERR.TEST_DISABLED);
       if (room.test !== true) return fail(ERR.TEST_FORBIDDEN);
     }
     if (!room.match) return fail(ERR.WRONG_PHASE, 'no running match');

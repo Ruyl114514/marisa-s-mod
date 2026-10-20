@@ -4,7 +4,9 @@
 //   - enemyGrade puts a value in its band (an edge belongs to the band that starts there; the attack interval runs the
 //     other way); no value or no table reads '—'
 //   - the codex lists one enemy per 图鉴 number and no summon-only enemy; a leader's keys are the leader, then its escorts
-//   - the report is read-only and a full-screen Modal (focus trap, Esc, focus restored); the lobby opens it
+//   - the report is read-only and a full-screen Modal (focus trap, Esc, focus restored); the lobby opens it, and so does
+//     the room — only there does the page hold the room's content set (public/js/content.js installs it for a room with
+//     `content.vanilla === false`), which is where a modded 盟约 / 策略 show up
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -82,14 +84,19 @@ test('codexEnemies: one per 图鉴 number, no summon-only enemy, by number; boss
   assert.deepEqual(bossEnemyKeys(null), []);
 });
 
-test('the report is read-only and a full-screen Modal; the lobby opens it (source contract)', () => {
+test('the report is read-only and a full-screen Modal; the lobby and the room open it (source contract)', () => {
   const src = read('public/js/screens/sweep.js');
   assert.match(src, /<\$\{Modal\} open=\$\{true\} onClose=\$\{onClose\} class="sw"/);
   assert.match(src, /<\$\{Modal\} open=\$\{true\} onClose=\$\{onClose\} class="sw-codex"/);
-  assert.doesNotMatch(src, /openLoadout|savePref\((?!TAB_PREF)|net\.|room\./, 'nothing but the remembered tab is written');
+  assert.doesNotMatch(src, /openLoadout|savePref\((?!TAB_PREF)|net\.|room\.set/, 'nothing but the remembered tab is written');
   assert.doesNotMatch(src, /name="box"|name="dice"/, 'only icons of the project\'s set');
   const lobby = read('public/js/screens/lobby.js');
   assert.match(lobby, /import \{ SweepReport \} from '\.\/sweep\.js';/);
   assert.match(lobby, /\$\{sweepOpen \? html`<\$\{SweepReport\} onClose=\$\{\(\) => setSweepOpen\(false\)\} \/>` : null\}/);
+  // the room's entry: the room is the only screen whose page holds the room's content set (content.js), so a modded
+  // room's 盟约 / 策略 are visible from there — the lobby's report reads the server's own data files
+  const room = read('public/js/screens/room.js');
+  assert.match(room, /import \{ SweepReport \} from '\.\/sweep\.js';/);
+  assert.match(room, /\$\{sweepOpen \? html`<\$\{SweepReport\} onClose=\$\{\(\) => setSweepOpen\(false\)\} \/>` : null\}/);
   assert.match(read('public/index.html'), /<link rel="stylesheet" href="\/css\/screens\/sweep\.css" \/>/);
 });

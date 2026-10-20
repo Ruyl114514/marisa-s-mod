@@ -43,8 +43,8 @@ test('sandbox catalogue, constrained preflight, no pin/public gate, real room ne
   const plugins=createRoomSets({registry:f.registry,visual:null,contents,policy:null});
   const lobby=new Lobby({registry:new SessionRegistry(),content:{cs:'c'.repeat(64)},plugins});t.after(()=>lobby.shutdown());
   const host={playerId:'h',name:'Host',connected:true,ws:null},guest={playerId:'g',name:'Guest',connected:true,ws:null};
-  lobby.create(host,{mode:'coop',difficulty:'NORMAL'});lobby.join(guest,{code:host.roomCode});
-  assert.deepEqual(lobby.setPlugins(host,{plugins:[{id:'demo'}]}),{ok:true});
+  await lobby.create(host,{mode:'coop',difficulty:'NORMAL'});lobby.join(guest,{code:host.roomCode});
+  assert.deepEqual(await lobby.setPlugins(host,{plugins:[{id:'demo'}]}),{ok:true});
   const room=lobby.roomOf(host),content=room.toState().content;
   assert.equal(content.execution,'sandbox');assert.equal(content.trusted,undefined);assert.equal(content.plugins[0].execution,'sandbox');
   const built=buildContentSet({registry:f.registry,ids:['demo']});assert.deepEqual(built.problems,[]);
@@ -78,7 +78,7 @@ test('native and mixed sets require consent; mode changes identity; source respo
   trusted.put('page','export default () => {};',{class:'trusted',permissions:['trusted.page'],entry:{client:'page.js'}},{'page.js':'globalThis.pageProbe = true;'});
   const contents=createContentSets({registry:trusted.registry,vanillaData:getData()});
   const rooms=createRoomSets({registry:trusted.registry,visual:null,contents,policy:null});
-  const mixed=rooms.resolve(['demo','page']);assert.ok(mixed.ok,JSON.stringify(mixed));
+  const mixed=await rooms.resolve(['demo','page']);assert.ok(mixed.ok,JSON.stringify(mixed));
   assert.equal(mixed.set.execution,'trusted');assert.equal(mixed.set.trusted.plugins.length,2);
   const set=contents.get(mixed.set.cs),part=mixed.set.cs.slice(0,16);
   const route=contents.file(part,'scripts/page/page.js');assert.match(route.type,/text\/javascript/);

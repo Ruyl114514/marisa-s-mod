@@ -330,7 +330,7 @@ test('production match host and an isolated browser module tree agree', { timeou
   r.trait.dsl = { dsl: 1, talents: [{ when: 'battleStart', do: [{ layers: { bond: 'egirShip', amount: 5, maxPerBattle: 3 } }] }] };
   const { f, set } = put(t, r);
   const contents = createContentSets({ registry: f.registry, vanillaData: DATA });
-  const resolved = contents.resolve(['data-demo']); assert.equal(resolved.ok, true);
+  const resolved = await contents.resolve(['data-demo']); assert.equal(resolved.ok, true);
   const id = Object.values(set.data.chess).find(c => c.charId === r.charId && !c.isGolden).chessId;
   const spec = fixtureSpec(); spec.cs = set.cs; spec.players[0].units[0].chessId = id;
   spec.players[0].bonds = { egirShip: { active: true, layers: 0, count: 1 } };

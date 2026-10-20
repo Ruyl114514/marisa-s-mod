@@ -335,6 +335,9 @@ Content-set disk changes use the same host-only reapply toast as cosmetics, with
 No message or field is added to a room with no plugins.
 Registration preflight caches completed script reports, including explicit compatibility errors. A timeout, killed
 child, spawn failure or missing report is transient and is not cached; reapplying identical settings runs a fresh probe.
+The server awaits the probe child instead of blocking on it (`buildContentSetAsync`, `server/plugins/scriptPreflight.js`),
+and warms the policy's default set once listening (`server/plugins/warmup.js`), so the first room does not pay for a
+composition every later room reuses.
 P3b integration (DESIGN §32.11): sandbox script sets require valid locked bytes but no per-seat consent [ASSUMED].
 `content.execution` and each script's badge identify sandbox mode; only native trusted compositions carry
 `content.trusted`. Execution mode is bound to cs through the hashed script descriptors. Mixed script/trusted sets

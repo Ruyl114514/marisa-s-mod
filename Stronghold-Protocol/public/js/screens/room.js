@@ -9,11 +9,16 @@
 // Spectator seats (community report #26, a remake feature): a co-op room with spectators shows the 观战席 strip under
 // the seats — names, offline marks, the host's ✕ (room.removeSpectator) — and a spectator's own view swaps the ready
 // button for 观战中 and offers 入座 (room.join of the room) while a player seat is free.
-// Plugins (DESIGN §32 P1a): the tag under the title — 「原版」 or 「插件 ×N」 — opens the 插件 panel (ui/pluginPanel.js:
-// the host switches the room's plugins, everybody else reads them). With gameplay plugins (§32.6: a content set of its
-// own — the tag reads 「非官方」 too) every seat shows whether its page has loaded and checked the room's content
-// (seats[].content: 载入中 / 就绪 / 校验失败), 准备就绪 and 开始模拟 wait for it (the server refuses them before:
-// CONTENT_NOT_READY), and a plugin mode the host chose shows beside the difficulty.
+// Plugins (DESIGN §32 P1a): the room's plugins are chosen on 选择模拟协议 (screens/lobby.js — its tag 「原版」 / 「插件 ×N」
+// opens the 插件 panel, ui/pluginPanel.js, and room.create is followed by room.setPlugins). The room reads the result
+// only: its tag is plain text (PluginTagStatic), and with gameplay plugins (§32.6: a content set of its own) every seat
+// shows whether its page has loaded and checked the room's content (seats[].content: 载入中 / 就绪 / 校验失败),
+// 准备就绪 and 开始模拟 wait for it (the server refuses them before: CONTENT_NOT_READY), and a plugin mode the host
+// chose shows beside the difficulty.
+// S.W.E.E.P.报告: opened here as well as in the lobby (screens/sweep.js). The reason is the content set: the report reads
+// data.list('bonds'/'bands'/'bosses'…), and public/js/data.js holds either the server's own files or a room's content set —
+// which public/js/content.js installs only while this page is IN a room (room.content.vanilla === false). A modded room's
+// 盟约 / 策略 are therefore visible from here, and only from here; in the lobby the report shows the server's own set.
 // Texts go through t() (docs/I18N.md).
 
 import { useEffect, useRef, useState } from '../../vendor/hooks.module.js';
@@ -28,7 +33,8 @@ import { GuideButton } from '../ui/guide.js';
 import { openStats } from './stats.js';
 import { SettingsButton } from '../ui/settings.js';
 import { LoadoutButton } from './loadout.js';
-import { PluginTag, isModdedRoom } from '../ui/pluginTag.js';
+import { SweepReport } from './sweep.js';
+import { isModdedRoom, PluginTagStatic } from '../ui/pluginTag.js';
 import { hasScriptConsent, rememberScriptConsent } from '../content.js';
 import { net } from '../net.js';
 import { store, useStore, shallowEqual, emptyMatch, isSpectating } from '../store.js';
@@ -244,6 +250,7 @@ export function RoomScreen() {
   const me = useStore((s) => s.me, shallowEqual);
   const conn = useStore((s) => s.connection, shallowEqual);
   const [busy, setBusy] = useState(null);
+  const [sweepOpen, setSweepOpen] = useState(false);
   const alive = useRef(true);
   const inFlight = useRef(false); // synchronous guard against double clicks (state updates are async)
   useEffect(() => () => { alive.current = false; }, []);
@@ -330,6 +337,8 @@ export function RoomScreen() {
           <${MicroLabel}>${t('当前延迟')}<//>
         </div>
         <${Button} variant="secondary" size="sm" icon="chart" class="stats-entry" onClick=${openStats} title=${t('统计数据')} aria-label=${t('统计数据')}>${t('统计')}<//>
+        <${Button} variant="secondary" size="sm" icon="book" class="room-sweep" onClick=${() => setSweepOpen(true)}
+          title=${t('S.W.E.E.P.报告：盟约、策略与敌方资料')}>S.W.E.E.P.<//>
         <${SettingsButton} class="room-settings" variant="secondary" label=${t('设置')} />
         <${GuideButton} class="room-guide" variant="secondary" label=${t('玩法说明')} />
       </div>
@@ -337,7 +346,7 @@ export function RoomScreen() {
         <${MicroLabel} tone="mint">${coop ? 'ALLIANCE LOBBY' : 'SOLO SIMULATION'}<//>
         <h1 class="topbar__title">${coop ? t('同盟模拟') : t('独立模拟')}${room.test ? html` <${TestMark} />` : null}<span class="topbar__sep"></span><${DifficultyTag} difficulty=${room.difficulty} size="lg" />
           ${room.content?.modeId ? html`<span class="room-mode" data-testid="room-mode">${(room.content.modes || []).find((m) => m.id === room.content.modeId)?.name || room.content.modeId}</span>` : null}</h1>
-        <${PluginTag} room=${room} myId=${me.playerId} />
+        <${PluginTagStatic} room=${room} />
       </div>
       <div class="topbar__right">
         ${coop ? html`<${InviteBox} code=${room.code} name=${me.name} difficulty=${room.difficulty} />` : html`<div class="solo-note"><${MicroLabel}>SINGLE OPERATOR<//><span>${t('仅限 1 名博士')}</span></div>`}
@@ -392,6 +401,7 @@ export function RoomScreen() {
             <//>`}
       </div>
     </footer>
+    ${sweepOpen ? html`<${SweepReport} onClose=${() => setSweepOpen(false)} />` : null}
   </div>`;
 }
 

@@ -1,4 +1,4 @@
-// SP_E2E=1, run this file alone. Settings selected in the actual room panel reach the second browser's content data.
+// SP_E2E=1, run this file alone. Settings selected in the 选择模拟协议 panel reach the second browser's content data.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -8,7 +8,7 @@ import { Client, OUT, hasChrome } from '../e2e/client.mjs';
 import { writePlugin } from '../helpers/pluginFixtures.js';
 const enabled = process.env.SP_E2E === '1' && hasChrome();
 
-test('room settings form changes both clients content compositions', { skip: !enabled, timeout: 180000 }, async () => {
+test('protocol-select settings form changes both clients content compositions', { skip: !enabled, timeout: 180000 }, async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plugin-settings-e2e-'));
   writePlugin(path.join(tmp, 'settings-test'), { manifest: 2, name: 'Settings test', version: '1.0.0', app: '*', api: 1,
     class: 'content', scope: ['room'], permissions: ['data.patch'], data: ['p.json'],
@@ -20,9 +20,9 @@ test('room settings form changes both clients content compositions', { skip: !en
   const host = new Client(P, srv.url, 'host', { prefix: 'settings', w:1600, h:1000 });
   const guest = new Client(P, srv.url, 'guest', { prefix: 'settings', w:1600, h:1000 });
   try {
-    await host.open(); await host.enter('凯尔希'); await host.click('.mode-card', '同盟模拟'); await host.click('.diff-card', '标准模拟'); await host.click('.create-box button', '创建同盟');
-    const code = (await host.waitFor(s => !!s.room?.code, 'room')).room.code;
-    await guest.open(); await guest.enter('阿米娅'); await guest.click('.join-row input'); await guest.page.keyboard.type(code); await guest.click('.join-row button', '加入同盟');
+    await host.open(); await host.enter('凯尔希');
+    // 插件 (DESIGN §32 P1a): the host picks the room's plugins on 选择模拟协议 — before the room exists, so the form
+    // writes the browser's lobby choice and create() sends it as room.setPlugins right after room.create.
     await host.click('[data-testid="plugin-tag"]');
     await host.page.waitForSelector('[data-plugin="settings-test"] [role="switch"]');
     await host.page.click('[data-plugin="settings-test"] [role="switch"]');
@@ -30,12 +30,22 @@ test('room settings form changes both clients content compositions', { skip: !en
     const selector = '[data-plugin="settings-test"] [data-setting="defense"]';
     await host.page.click(selector, { count: 3 }); await host.page.type(selector, '0.4');
     await host.page.click('[data-plugin="settings-test"] [data-testid="plugin-settings"] button[type="submit"]');
+    await host.page.waitForFunction(() => {
+      const raw = localStorage.getItem('sp.pref.lobby-plugins');
+      if (!raw) return false;
+      try { return JSON.parse(raw).some((e) => e.id === 'settings-test' && e.settings?.defense === 0.4); } catch { return false; }
+    }, { timeout: 15000 });
+    await host.click('.modal__actions button', '完成');
+    await host.click('.mode-card', '同盟模拟'); await host.click('.diff-card', '标准模拟'); await host.click('.create-box button', '创建同盟');
+    const code = (await host.waitFor(s => !!s.room?.code, 'room')).room.code;
+    await guest.open(); await guest.enter('阿米娅'); await guest.click('.join-row input'); await guest.page.keyboard.type(code); await guest.click('.join-row button', '加入同盟');
+    await host.page.waitForFunction(() => globalThis.__SP__.data.get('bonds')?.deputShip?.bb?.base_def === 0.4, { timeout:30000 });
     await guest.page.waitForFunction(() => globalThis.__SP__?.data.get('bonds')?.deputShip?.bb?.base_def === 0.4, { timeout:30000 });
     assert.equal(await host.page.evaluate(() => globalThis.__SP__.data.get('bonds').deputShip.bb.base_def), 0.4);
+    assert.match(await guest.page.$eval('.room-screen [data-testid="plugin-tag"]', (e) => e.textContent), /插件 ×1/);
     fs.mkdirSync(OUT, { recursive:true });
     await host.page.screenshot({ path:path.join(OUT,'plugins-settings-host.png'), fullPage:true });
-    await guest.click('[data-testid="plugin-tag"]');
-    await guest.page.waitForSelector(selector);
-    assert.equal(await guest.page.$eval(selector, e => e.disabled), true);
+    await guest.page.screenshot({ path:path.join(OUT,'plugins-settings-guest.png'), fullPage:true });
+    assert.equal(await guest.page.$('.room-screen [data-testid="plugin-tag"] button'), null, 'a guest reads the tag, no panel');
   } finally { await host.close(); await guest.close(); await srv.close(); fs.rmSync(tmp, { recursive:true, force:true }); }
 });

@@ -28,7 +28,7 @@
 import { ERR, DIFFICULTIES } from '../../shared/constants.js';
 import { contentHashOf, csUrlPart, isContentHash } from '../../shared/plugins/identity.js';
 import { normalizeSettings } from '../../shared/plugins/patch.js';
-import { buildContentSet, contentSetFiles } from './contentSet.js';
+import { buildContentSetAsync, contentSetFiles } from './contentSet.js';
 
 const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
 /** Content sets kept that no room holds (their /cs/ files stay servable a while). [ASSUMED] */
@@ -69,11 +69,11 @@ export function pluginModes(modes, vanillaData) {
 /**
  * The content sets of one server.
  * @param {{ registry: { plugin: (id: string) => any, onScan?: (fn: () => void) => (() => void) }, vanillaData: Readonly<Record<string, any>>, log?: object,
- *   maxSets?: () => number, build?: typeof buildContentSet, filesOf?: typeof contentSetFiles, maxKept?: number }} opts
+ *   maxSets?: () => number, build?: typeof buildContentSetAsync, filesOf?: typeof contentSetFiles, maxKept?: number }} opts
  *   maxSets: the limit now (the server owner's policy may change it); build / filesOf: the C1 builder (tests inject one)
  */
 export function createContentSets({ registry, vanillaData, log = noopLog, maxSets = () => DEFAULT_MAX_SETS,
-  build = buildContentSet, filesOf = contentSetFiles, maxKept = MAX_KEPT }) {
+  build = buildContentSetAsync, filesOf = contentSetFiles, maxKept = MAX_KEPT }) {
   /** @type {Map<string, ContentSet>} by cs16, most recently used last */
   const sets = new Map();
   /** @type {Map<string, number>} cs16 → rooms holding it */
@@ -95,6 +95,8 @@ export function createContentSets({ registry, vanillaData, log = noopLog, maxSet
 
   /** cs16 by what a set was built from (memoKey), most recent last — written once the set is kept */
   const memo = new Map();
+  /** memoKey → the build in flight for it: two rooms asking for one set at once build it once (warm-up + first room) */
+  const inflight = new Map();
   /** build() calls so far (stats: a burst of requests for one set builds it once) */
   let builds = 0;
   /**
@@ -193,13 +195,50 @@ export function createContentSets({ registry, vanillaData, log = noopLog, maxSet
   }
 
   /**
+   * One build, shared by every caller asking for the same set (memoKey) while it runs. The warm-up (plugins/warmup.js)
+   * and the first room that opens with the default set ask at almost the same moment; without this the server builds the
+   * same content twice and the room waits for its own copy.
+   * @returns {Promise<{ built: object } | { error: string, detail: string }>}
+   */
+  const buildOnce = (mk, ids, norm) => {
+    const running = mk ? inflight.get(mk) : null;
+    if (running) return running;
+    const p = (async () => {
+      let built;
+      try {
+        builds++;
+        built = await build({ registry, ids: ids.map((id) => (norm[id] ? { id, settings: norm[id] } : id)) });
+      } catch (e) {
+        log.error?.('[plugins] content set failed to build', e);
+        return { error: ERR.INTERNAL, detail: 'the content set failed to build' };
+      }
+      if (!built || !isContentHash(built.cs) || (Array.isArray(built.problems) && built.problems.length)) {
+        const list = Array.isArray(built?.problems) ? built.problems : [];
+        const why = list.length ? list.slice(0, 4).map(problemText).join('; ') : 'no content set';
+        log.warn?.(`[plugins] content set of ${ids.join(', ')} refused: ${why}`);
+        // a load-order problem keeps its own code (PLUGIN_DEPENDENCY / PLUGIN_CONFLICT); any other problem of the data is
+        // a set this server cannot make
+        const code = list.find((p) => p && Object.hasOwn(ERR, p.code))?.code;
+        return { error: code || ERR.PLUGIN_BLOCKED, detail: why.slice(0, 200) };
+      }
+      return { built };
+    })();
+    if (mk) {
+      inflight.set(mk, p);
+      // cleared whichever way it ends: a failure is reported to the callers that asked, not remembered as the answer
+      p.then(() => inflight.delete(mk), () => inflight.delete(mk));
+    }
+    return p;
+  };
+
+  /**
    * The content set of the content plugins `ids` (closed and in load order — server/plugins/roomSets.js), built or
    * remembered (see the header).
    * @param {string[]} ids
    * @param {{ settings?: Record<string, Record<string, unknown>>, replacing?: string | null }} [opts]
    * @returns {{ ok: true, set: ContentSet } | { error: string, detail: string }}
    */
-  function resolve(ids, { settings = {}, replacing = null } = {}) {
+  async function resolve(ids, { settings = {}, replacing = null } = {}) {
     // the same plugins, in the same state, with the same (normalized) settings: the set built before (a build takes a few
     // hundred ms of this process — every rooms: fixed room, every 「重新应用」 and every cosmetic switch beside them asks again)
     const norm = normalized(ids, settings);
@@ -216,23 +255,9 @@ export function createContentSets({ registry, vanillaData, log = noopLog, maxSet
       // never the one dropped), so what is not remembered would be one set more [ASSUMED: a held set whose plugin's
       // manifest changed on disk since — same files, same cs — is refused here rather than built to find out]
       if (full) return busy();
-      let built;
-      try {
-        builds++;
-        built = build({ registry, ids: ids.map((id) => (norm[id] ? { id, settings: norm[id] } : id)) });
-      } catch (e) {
-        log.error?.('[plugins] content set failed to build', e);
-        return { error: ERR.INTERNAL, detail: 'the content set failed to build' };
-      }
-      if (!built || !isContentHash(built.cs) || (Array.isArray(built.problems) && built.problems.length)) {
-        const list = Array.isArray(built?.problems) ? built.problems : [];
-        const why = list.length ? list.slice(0, 4).map(problemText).join('; ') : 'no content set';
-        log.warn?.(`[plugins] content set of ${ids.join(', ')} refused: ${why}`);
-        // a load-order problem keeps its own code (PLUGIN_DEPENDENCY / PLUGIN_CONFLICT); any other problem of the data is
-        // a set this server cannot make
-        const code = list.find((p) => p && Object.hasOwn(ERR, p.code))?.code;
-        return { error: code || ERR.PLUGIN_BLOCKED, detail: why.slice(0, 200) };
-      }
+      const made = await buildOnce(mk, ids, norm);
+      if ('error' in made) return made;
+      const built = made.built;
       const k = csUrlPart(built.cs);
       set = sets.get(k) || null;
       if (!set || set.cs !== built.cs) set = adopt(built);

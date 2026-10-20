@@ -29,6 +29,10 @@ import { store, useStore, shallowEqual, loadPref, savePref } from '../store.js';
 import { getConfig, getMode, getStage, useData } from '../data.js';
 import { t, tc, N_ } from '../../../shared/i18n.js';
 import { NoticesButton } from '../ui/notices.js';
+// the plugin tag of 选择模拟协议 (DESIGN §32 P1a): what this room will carry — the panel behind it loads on the tap
+import { PluginTag, lobbyPlugins, lobbySelection, lobbySelectionFor, roomPlugins, setLobbyPlugins } from '../ui/pluginTag.js';
+// the catalogue, read once when a pre-selection has to be trimmed to what this server still offers (create)
+import { loadCatalog, catalog, installedCount } from '../content.js';
 
 /** Official mode texts (activity_table act2autochess.modeDataDict), fallback when config.json is absent. */
 export const MODE_TEXT = {
@@ -262,6 +266,11 @@ function DifficultyCard({ roomMode, difficulty, selected, onSelect }) {
 export function LobbyScreen() {
   const me = useStore((s) => s.me, shallowEqual);
   const conn = useStore((s) => s.connection, shallowEqual);
+  // 测试模式 (MOD 新增, docs/DEV-MODE.md): set by the title screen's 测试模式 entry, consumed by this screen's create
+  const testMode = useStore((s) => s.ui.testMode);
+  // the plugins every new room of this server is created with (welcome.roomDefaults): the tag's default before this
+  // browser picks a set of its own (ui/pluginTag.js lobbyPlugins)
+  const roomDefaults = useStore((s) => s.roomDefaults, shallowEqual);
   useData('config');
   const [roomMode, setRoomMode] = useState(() => (loadPref('lobby.mode', 'coop') === 'solo' ? 'solo' : 'coop'));
   const [difficulty, setDifficulty] = useState(() => {
@@ -269,8 +278,11 @@ export function LobbyScreen() {
     return DIFFICULTIES.includes(d) ? d : 'FUNNY';
   });
   const [code, setCode] = useState('');
-  const [asTest, setAsTest] = useState(false);
-  const testMode = useStore((s) => s.testMode === true);
+  // 测试房间复选框（上游 v0.3.1 原生 test room，DESIGN §34.8）：复选框只在进程开关打开、欢迎帧带来 `welcome.testMode`
+  // 时提供（`testAllowed`）；标题界面「测试模式」入口走过 `ui.testMode`，所以进来时默认勾上，让这个控件如实反映现状。
+  const [asTest, setAsTest] = useState(!!testMode);
+  // 上游的 `welcome.testMode` (DESIGN §34.8)：**服务器**进程开关是否允许测试房间。它只决定复选框是否显示（客户端不能设置它）。
+  const testAllowed = useStore((s) => s.testMode === true);
   const [busy, setBusy] = useState(null);
   const [recent] = useState(recentRooms);
   const marks = loadPref('recentTestRooms', []);
@@ -295,9 +307,46 @@ export function LobbyScreen() {
       if (alive.current) setBusy(null);
     }
   };
-  const create = () => run('create', () => net.request('room.create', {
-    mode: roomMode, difficulty, ...(testMode && asTest ? { test: true } : {}),
-  }));
+  const create = () => {
+    // 测试模式：两条来源合一 ——
+    // - MOD (docs/DEV-MODE.md)：标题界面「测试模式」入口置了 `ui.testMode`，这次创建就发 `{ mode: 'solo', test: true }`，
+    //   并清掉这个旗标，这样之后点「创建同盟」又是一个普通房间。
+    // - 上游 (DESIGN §34.8)：创建界面的「测试房间」复选框 (`asTest`) 同样发 `test: true`，但房间模式仍是所选模式
+    //   （房间照旧按所选难度/人数创建，只是带测试指令）。
+    // 两者都发 solo 是刻意的：服务器无论如何都会把测试房间强制成 solo（不可联机），发 solo 只是让意图明确；
+    // 而 `asTest` 单独勾选时只发 `test: true`，不劫持房主选的模式。
+    const test = !!(testMode || asTest);
+    const fields = test
+      ? { mode: testMode ? 'solo' : roomMode, difficulty, test: true }
+      : { mode: roomMode, difficulty };
+    // 插件 (DESIGN §32 P1a): the plugins this player picked on this screen travel with the room they create — room.create
+    // carries none (the server applies plugins/config.json's own default set), so the choice goes right after it, as
+    // room.setPlugins — the host, before any match, is exactly who may send that. No choice of this browser's: the
+    // server's default set stands, nothing is sent.
+    const picked = lobbySelection(lobbyPlugins.get().entries);
+    // A default gameplay plugin may need a cold sandbox preflight, hence the long timeout.
+    return run('create', () => net.request('room.create', fields, { timeout: 45000 }).then(async () => {
+      if (testMode) store.patch('ui', { testMode: false });
+      // no choice of this browser's: the server's default set stands, nothing is sent
+      if (!picked) return;
+      // a server without plugins has nothing to switch on or off
+      if (!installedCount(store.get())) return;
+      // the pre-selection outlives the servers it was made on: one plugin removed since would have the whole set refused
+      // (server/lobby.js resolveContent), so it goes trimmed to the ids the catalogue offers (lobbySelectionFor). A server
+      // the catalogue could not be read from (loadCatalog never rejects) sends the choice as it is, which is what
+      // room.setPlugins always took; the server then refuses what it does not know.
+      let plugins = picked;
+      const list = await loadCatalog();
+      if (catalog.get().status === 'ready') plugins = lobbySelectionFor(lobbyPlugins.get().entries, roomPlugins(list));
+      // An empty set is sent on purpose: it means 原版, which is what the tag showed before 创建. Returning early here
+      // would leave the server's default set on the room — the tag would have promised the original game and delivered
+      // a modded room.
+      // The room exists by now (the server broadcasts its state before it answers): a refused set must not read as a
+      // failed create. The player is already in the room, carrying the server's defaults — so the refusal is told once
+      // and the stale choice is dropped, which is what leaves the room's own set in place.
+      try { await net.request('room.setPlugins', { plugins }, { timeout: 45000 }); } catch (err) { toastError(err); setLobbyPlugins(null); }
+    }));
+  };
   const join = (c = code) => {
     // `onClick=${join}` hands the click EVENT as the first argument, and a default parameter only applies to
     // `undefined` — codeArg keeps an event target out of the key and falls back to the input field
@@ -345,6 +394,7 @@ export function LobbyScreen() {
       <div class="topbar__center">
         <${MicroLabel} tone="mint">SIMULATION PROTOCOL SELECT<//>
         <h1 class="topbar__title">${t('选择模拟协议')}</h1>
+        <${PluginTag} lobby=${true} myId=${me.playerId} defaults=${roomDefaults} />
       </div>
       <div class="topbar__right">
         <${ResumeMatchButton} />
@@ -395,19 +445,23 @@ export function LobbyScreen() {
           ${DIFFICULTIES.map((d) => html`<${DifficultyCard} key=${d} roomMode=${roomMode} difficulty=${d} selected=${difficulty === d} onSelect=${pickDifficulty} />`)}
         </div>
         <div class="create-box">
-          ${testMode ? html`<label class="create-box__test" data-testid="create-test">
+          ${testAllowed ? html`<label class="create-box__test" data-testid="create-test">
             <input type="checkbox" checked=${asTest} onChange=${(e) => setAsTest(e.target.checked)} />
             <span>${t('测试房间')}</span>
             <em class="t-dim">${t('不计入战绩。房间会标明「测试」，只有房主能使用测试指令。')}</em>
           </label>` : null}
+          ${testMode ? html`<div class="create-box__test" role="note">
+            <${Icon} name="snow" />
+            <span>${t('测试模式：资金无限、不会禁用角色，且无法联机')}</span>
+          </div>` : null}
           <${Tooltip} block=${true} text=${online ? null : t('正在连接服务器…')}>
-            <${Button} variant="primary" size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
-              ${roomMode === 'solo' ? t('开始独立模拟') : t('创建同盟')}
+            <${Button} variant=${testMode ? 'amber' : 'primary'} size="xl" block=${true} iconRight="chevrons" loading=${busy === 'create'} disabled=${!online} onClick=${create}>
+              ${testMode ? t('开始测试模式') : roomMode === 'solo' ? t('开始独立模拟') : t('创建同盟')}
             <//>
           <//>
           <div class="create-box__hint">
             ${online
-              ? html`<span>${roomMode === 'solo' ? t('创建后即可开始模拟') : t('创建后可邀请好友或添加 AI 队友')}</span>`
+              ? html`<span>${testMode ? t('单人测试房间：资金无限、不会禁用角色，且无法联机') : roomMode === 'solo' ? t('创建后即可开始模拟') : t('创建后可邀请好友或添加 AI 队友')}</span>`
               : html`<${Spinner} size="sm" label="CONNECTING" />`}
           </div>
         </div>
